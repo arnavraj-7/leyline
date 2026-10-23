@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "leyline"
 
 include(":mesh-core")   // pure Kotlin: packets, routing, dedup, TTL — no Android
+include(":mesh-ble")    // Android: advertise, scan, GATT client/server
