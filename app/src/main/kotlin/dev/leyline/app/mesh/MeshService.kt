@@ -1,11 +1,13 @@
 package dev.leyline.app.mesh
 
+import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import dev.leyline.app.LeylineApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +25,7 @@ import kotlinx.coroutines.launch
 class MeshService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var notificationUpdates: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -35,6 +38,7 @@ class MeshService : Service() {
         }
         if (intent?.action == ACTION_STOP) {
             container.mesh.stop()
+            releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -46,6 +50,7 @@ class MeshService : Service() {
         } else {
             startForeground(Notifier.SERVICE_ID, notification)
         }
+        holdWakeLock()
         container.mesh.start()
 
         notificationUpdates?.cancel()
@@ -60,7 +65,30 @@ class MeshService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        releaseWakeLock()
         super.onDestroy()
+    }
+
+    /**
+     * A foreground service keeps the process alive, not the CPU. With the screen off
+     * the phone dozes and relay delays, handshake timeouts and resyncs stall until
+     * something else wakes it. A relay is only useful awake, so hold the lock for as
+     * long as the mesh runs; the user stops it from the notification.
+     */
+    @SuppressLint("WakelockTimeout")
+    private fun holdWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        wakeLock = getSystemService(PowerManager::class.java)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "leyline:mesh")
+            ?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.takeIf { it.isHeld }?.release()
+        wakeLock = null
     }
 
     companion object {
