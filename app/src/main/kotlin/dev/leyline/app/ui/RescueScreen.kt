@@ -191,7 +191,14 @@ fun RescueActions(m: MessageEntity, responses: List<MessageEntity>, onRespond: (
 fun RescueScreen(viewModel: MessagesViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var findFor by rememberSaveable { mutableStateOf<Long?>(null) }
-    val list = liveSos(state)
+    // Ticks once a minute so "4 min ago" and the 6 h cut-off stay current on a quiet mesh.
+    val now by produceState(System.currentTimeMillis()) {
+        while (true) {
+            delay(60_000)
+            value = System.currentTimeMillis()
+        }
+    }
+    val list = liveSos(state, now)
     val open = list.filter { !it.found }
 
     LazyColumn(
@@ -212,7 +219,7 @@ fun RescueScreen(viewModel: MessagesViewModel) {
             }
         }
         items(list, key = { it.message.id }) { sos ->
-            RescueCard(sos, state, onRespond = { viewModel.respond(sos.message.id, it) }, onFind = { findFor = sos.message.id })
+            RescueCard(sos, state, now, onRespond = { viewModel.respond(sos.message.id, it) }, onFind = { findFor = sos.message.id })
         }
     }
 
@@ -253,7 +260,7 @@ private fun SummaryStat(value: String, label: String, color: Color) {
 }
 
 @Composable
-private fun RescueCard(sos: LiveSos, state: MessagesUiState, onRespond: (ResponseStatus) -> Unit, onFind: () -> Unit) {
+private fun RescueCard(sos: LiveSos, state: MessagesUiState, now: Long, onRespond: (ResponseStatus) -> Unit, onFind: () -> Unit) {
     val m = sos.message
     val name = nameOf(m, state)
     Card(
@@ -270,7 +277,7 @@ private fun RescueCard(sos: LiveSos, state: MessagesUiState, onRespond: (Respons
                     Text(name, style = MaterialTheme.typography.titleMedium)
                     Text(
                         listOfNotNull(
-                            ageLabel(m.receivedAt),
+                            ageLabel(m.receivedAt, now),
                             if (m.outgoing) "your SOS" else hopsLabel(m.hops).lowercase(),
                         ).joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
@@ -291,8 +298,8 @@ private fun RescueCard(sos: LiveSos, state: MessagesUiState, onRespond: (Respons
     }
 }
 
-private fun ageLabel(at: Long): String {
-    val minutes = (System.currentTimeMillis() - at) / 60_000
+private fun ageLabel(at: Long, now: Long): String {
+    val minutes = (now - at) / 60_000
     return when {
         minutes < 1 -> "just now"
         minutes < 60 -> "$minutes min ago"
