@@ -86,6 +86,7 @@ import dev.leyline.mesh.ResponseStatus
 import dev.leyline.mesh.SosKind
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -102,8 +103,9 @@ fun MessagesScreen(viewModel: MessagesViewModel, openSos: Boolean, onSosHandled:
 
     LaunchedEffect(openSos, state.running) {
         // Opened from the Quick Settings tile: send as soon as the mesh is up.
+        // Default text, not the half-typed chat draft.
         if (openSos && state.running) {
-            viewModel.send(draft, sos = true) { if (it) draft = "" }
+            viewModel.send("", sos = true) {}
             onSosHandled()
         }
     }
@@ -388,7 +390,7 @@ private fun SosCard(
                                 Text("≈ ${formatDistance(metres)} $direction of you", style = MaterialTheme.typography.labelLarge)
                             }
                             Text(
-                                "%.5f, %.5f · ±%d m".format(there.latitude, there.longitude, there.accuracyMeters),
+                                "%.5f, %.5f · ±%d m".format(Locale.US, there.latitude, there.longitude, there.accuracyMeters),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -645,7 +647,7 @@ private fun Composer(
                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ),
                 supportingText = if (draft.length > MessageBody.SOS_MAX_CHARS) {
-                    { Text("Over 280: fine as chat, too long for SOS") }
+                    { Text("Over ${MessageBody.SOS_MAX_CHARS}: fine as chat, too long for SOS") }
                 } else {
                     null
                 },
