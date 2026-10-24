@@ -6,6 +6,7 @@ import dev.leyline.mesh.NodeId
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -43,7 +44,7 @@ fun formatClock(epochMillis: Long): String = clockFormat.format(Instant.ofEpochM
 
 fun formatDuration(millis: Long): String = when {
     millis < 1_000 -> "$millis ms"
-    millis < 60_000 -> "%.1f s".format(millis / 1_000.0)
+    millis < 60_000 -> "%.1f s".format(Locale.US, millis / 1_000.0)
     else -> "${millis / 60_000} min ${millis / 1_000 % 60} s"
 }
 
@@ -74,7 +75,7 @@ fun distanceAndBearing(from: Location, to: Location): Pair<Double, String> {
     return distance to compass
 }
 
-fun formatDistance(metres: Double): String = when {
-    metres < 1_000 -> "${(metres / 10).roundToInt() * 10} m"
-    else -> "%.1f km".format(metres / 1_000)
+fun formatDistance(metres: Double): String {
+    val rounded = (metres / 10).roundToInt() * 10
+    return if (rounded < 1_000) "$rounded m" else "%.1f km".format(Locale.US, metres / 1_000)
 }

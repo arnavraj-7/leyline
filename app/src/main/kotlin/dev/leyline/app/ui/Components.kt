@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,13 +57,15 @@ fun Pill(text: String, color: Color, modifier: Modifier = Modifier, filled: Bool
 /** A dot that breathes while something is live (linked, beacon on). */
 @Composable
 fun PulsingDot(color: Color, live: Boolean, size: Dp = 10.dp) {
-    val transition = rememberInfiniteTransition(label = "pulse")
-    val scale by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = 2.4f,
-        animationSpec = infiniteRepeatable(tween(1_400), RepeatMode.Restart),
-        label = "scale",
-    )
+    // Only run the animation while live, so idle dots don't redraw every frame.
+    val scale = if (live) {
+        rememberInfiniteTransition(label = "pulse").animateFloat(
+            initialValue = 1f,
+            targetValue = 2.4f,
+            animationSpec = infiniteRepeatable(tween(1_400), RepeatMode.Restart),
+            label = "scale",
+        ).value
+    } else 1f
     Canvas(Modifier.size(size * 2.4f)) {
         val r = size.toPx() / 2
         if (live) drawCircle(color.copy(alpha = (2.4f - scale) / 1.4f * 0.45f), radius = r * scale)
