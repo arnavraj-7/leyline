@@ -80,7 +80,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        openSos = intent?.getBooleanExtra(EXTRA_SOS, false) == true
+        // Only on first creation: after a rotation the same intent would send a second SOS.
+        if (savedInstanceState == null) openSos = intent?.getBooleanExtra(EXTRA_SOS, false) == true
         setContent {
             LeylineTheme { Root() }
         }
