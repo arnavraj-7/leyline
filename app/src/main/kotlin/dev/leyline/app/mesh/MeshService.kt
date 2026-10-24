@@ -1,6 +1,7 @@
 package dev.leyline.app.mesh
 
 import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -8,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import dev.leyline.app.LeylineApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,12 +46,10 @@ class MeshService : Service() {
             return START_NOT_STICKY
         }
 
-        val notification = container.notifier.serviceNotification(neighbours = 0, relaying = true, outbox = 0)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(Notifier.SERVICE_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-        } else {
-            startForeground(Notifier.SERVICE_ID, notification)
-        }
+        goForeground(
+            container.notifier.serviceNotification(neighbours = 0, relaying = true, outbox = 0),
+            locate = container.mesh.locationPermitted(),
+        )
         holdWakeLock()
         container.mesh.start()
 
@@ -67,6 +67,26 @@ class MeshService : Service() {
         scope.cancel()
         releaseWakeLock()
         super.onDestroy()
+    }
+
+    /**
+     * connectedDevice keeps the BLE links open. location as well keeps GPS reachable
+     * while no screen of ours is up, so an SOS from the Quick Settings tile still gets
+     * a fix. Android 14 refuses the location type without a location grant, or when
+     * the system restarts us in the background, so then it's Bluetooth only.
+     */
+    private fun goForeground(notification: Notification, locate: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return startForeground(Notifier.SERVICE_ID, notification)
+        val bluetooth = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        if (locate) {
+            try {
+                startForeground(Notifier.SERVICE_ID, notification, bluetooth or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+                return
+            } catch (e: SecurityException) {
+                Log.w(TAG, "relaying without background location: ${e.message}")
+            }
+        }
+        startForeground(Notifier.SERVICE_ID, notification, bluetooth)
     }
 
     /**
@@ -92,6 +112,7 @@ class MeshService : Service() {
     }
 
     companion object {
+        private const val TAG = "LeylineService"
         const val ACTION_STOP = "dev.leyline.STOP"
         const val ACTION_STOP_RING = "dev.leyline.STOP_RING"
 

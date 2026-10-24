@@ -5,6 +5,8 @@
     <!-- Background relay runs as a foreground service holding BLE connections. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- GPS for an SOS sent from the Quick Settings tile, when no screen of ours is up. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Keeps the CPU running relay timers with the screen off. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -43,7 +45,7 @@
         <service
             android:name=".mesh.MeshService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|location" />
 
         <service
             android:name=".mesh.SosTileService"
