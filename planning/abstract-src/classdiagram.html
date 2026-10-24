@@ -1,0 +1,114 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #ffffff; }
+  #wrap { padding: 24px; }
+  .mermaid svg { width: 2300px !important; max-width: none !important; height: auto !important; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+</head>
+<body>
+<div id="wrap">
+<pre class="mermaid">
+classDiagram
+    direction LR
+    class NodeId {
+        +Int value
+        +BROADCAST$
+    }
+    class MessageId {
+        +Long value
+    }
+    class Packet {
+        +MessageId id
+        +PacketType type
+        +Priority priority
+        +NodeId origin
+        +NodeId destination
+        +Int ttl
+        +Long createdAt
+        +List~NodeId~ path
+        +ByteArray payload
+        +hopCount() Int
+    }
+    class PacketCodec {
+        &lt;&lt;object&gt;&gt;
+        +encode(Packet) ByteArray
+        +decode(ByteArray) Packet
+    }
+    class SeenCache {
+        -capacity Int
+        -expiryMillis Long
+        +markIfNew(MessageId) Boolean
+    }
+    class Router {
+        -self NodeId
+        +originate(payload, destination, priority, ttl) Packet
+        +onReceive(Packet) RouteDecision
+    }
+    class RouteDecision {
+        &lt;&lt;sealed&gt;&gt;
+        Drop(reason)
+        Accept(deliver, forward)
+    }
+    class ForwardQueue {
+        +offer(Packet)
+        +poll() Packet
+    }
+    class Chunker {
+        +split(ByteArray, mtu) List~Chunk~
+    }
+    class Reassembler {
+        +accept(Chunk) ByteArray?
+    }
+    class Outbox {
+        &lt;&lt;interface&gt;&gt;
+        +save(Packet)
+        +pending() List~Packet~
+        +markSent(MessageId, NodeId)
+    }
+    class Transport {
+        &lt;&lt;interface&gt;&gt;
+        +neighbours() Flow
+        +send(NodeId, ByteArray)
+    }
+    class MeshNode {
+        +send(text, priority)
+        +onBytes(ByteArray, NodeId)
+    }
+    class BleTransport
+    class ConnectionPool
+    class GattServerManager
+    class GattClientManager
+    class RoomOutbox
+    class MeshService
+    class ChatViewModel
+
+    Packet --> NodeId
+    Packet --> MessageId
+    Router --> SeenCache
+    Router ..> RouteDecision
+    Router ..> Packet
+    MeshNode --> Router
+    MeshNode --> ForwardQueue
+    MeshNode --> Outbox
+    MeshNode --> Transport
+    MeshNode --> PacketCodec
+    Transport <|.. BleTransport
+    BleTransport --> ConnectionPool
+    BleTransport --> Chunker
+    BleTransport --> Reassembler
+    ConnectionPool --> GattClientManager
+    ConnectionPool --> GattServerManager
+    Outbox <|.. RoomOutbox
+    MeshService --> MeshNode
+    ChatViewModel --> MeshService
+</pre>
+</div>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'strict', themeVariables: { fontSize: '18px' }, class: { useMaxWidth: false } });
+</script>
+</body>
+</html>

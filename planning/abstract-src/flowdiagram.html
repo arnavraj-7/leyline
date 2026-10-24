@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #ffffff; }
+  #wrap { padding: 24px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+</head>
+<body>
+<div id="wrap">
+<pre class="mermaid">
+flowchart TB
+    UI["Phone A · Compose UI → ViewModel"] --> SVC["MeshService (foreground)"]
+    SVC --> R["Router — mesh-core<br/>assign id · TTL · priority"]
+    R -- "1 · commit first" --> OB[("Room outbox")]
+    R -- "2 · then send" --> CC["Codec + Chunker<br/>chunk = MTU − 3 bytes"]
+    CC --> GA["GATT client / server — mesh-ble"]
+    GA -- "BLE · ~180 B chunks" --> RB["Phone B · relay<br/>reassemble → dedup → TTL − 1 → forward"]
+    RB -- "BLE" --> RC["Phone C · destination<br/>reassemble → dedup → deliver"]
+    RC -. "delivery receipt, reverse path" .-> RB
+    RB -. "receipt" .-> GA
+</pre>
+</div>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'strict', themeVariables: { fontSize: '18px' }, flowchart: { useMaxWidth: false } });
+</script>
+</body>
+</html>
