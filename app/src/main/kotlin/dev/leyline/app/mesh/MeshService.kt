@@ -35,7 +35,6 @@ class MeshService : Service() {
         val container = (application as LeylineApp).container
         if (intent?.action == ACTION_STOP_RING) {
             container.mesh.stopRinging()
-            container.notifier.cancelRinging()
             return START_STICKY
         }
         if (intent?.action == ACTION_STOP) {

@@ -243,7 +243,11 @@ class MeshController(
         return SendResult.Sent(packet.id, withLocation = false)
     }
 
-    fun stopRinging() = alarm.stop()
+    /** Stops the alarm and its notification together, from the banner or the notification. */
+    fun stopRinging() {
+        alarm.stop()
+        notifier.cancelRinging()
+    }
 
     private suspend fun send(body: MessageBody, sos: Boolean, destination: NodeId): SendResult {
         val node = session?.node ?: return SendResult.NotRunning
