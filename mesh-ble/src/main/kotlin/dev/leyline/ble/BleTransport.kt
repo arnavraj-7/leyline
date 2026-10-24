@@ -81,6 +81,7 @@ class BleTransport(
         data class BluetoothChanged(val on: Boolean) : Inbound
         data class SetAdvert(val info: AdvertInfo) : Inbound
         data class SetAggressive(val enabled: Boolean) : Inbound
+        data object RestartScan : Inbound
     }
 
     private class Link(val node: NodeId, val conn: PeerConnection) {
@@ -99,7 +100,9 @@ class BleTransport(
     // Written only by the inbound coroutine; read by send().
     private val links = ConcurrentHashMap<NodeId, Link>()
 
-    // Inbound coroutine only.
+    // Inbound coroutine only, under [lock]: stop() runs on the caller's thread.
+    private val lock = Any()
+    private var stopped = false
     private val nodeOf = HashMap<PeerConnection, NodeId?>()
     private val serverConns = HashMap<String, PeerConnection>()
     private val connecting = HashSet<NodeId>()
@@ -115,6 +118,11 @@ class BleTransport(
     private var job: Job? = null
     private var advert = AdvertInfo(self, carryingSos = false, relaying = true)
     private var aggressive = true
+
+    // The mode the running scan really uses; null when not scanning. Can lag [aggressive]
+    // when Scanner refuses a restart to stay under Android's scan throttle.
+    private var scanMode: Boolean? = null
+    private var scanRetryPending = false
 
     private val _sightings = MutableStateFlow<Map<NodeId, Sighting>>(emptyMap())
 
@@ -150,8 +158,8 @@ class BleTransport(
         }
         job = scope.launch {
             launch { maintain() }
-            if (adapter?.isEnabled == true) radiosUp()
-            for (event in inbound) handle(event)
+            if (adapter?.isEnabled == true) synchronized(lock) { if (!stopped) radiosUp() }
+            for (event in inbound) synchronized(lock) { if (!stopped) handle(event) }
         }
     }
 
@@ -159,7 +167,12 @@ class BleTransport(
         runCatching { context.unregisterReceiver(bluetoothReceiver) }
         job?.cancel()
         job = null
-        radiosDown()
+        // The inbound coroutine may be mid-event on another thread; wait for it, and make
+        // sure an event it already took can't bring the radios back up afterwards.
+        synchronized(lock) {
+            stopped = true
+            radiosDown()
+        }
     }
 
     /** SOS beacon mode and relay flag, as advertised to phones that haven't connected yet. */
@@ -214,9 +227,13 @@ class BleTransport(
             }
             is Inbound.BluetoothChanged -> if (event.on) radiosUp() else radiosDown()
             is Inbound.SetAdvert -> applyAdvert(event.info)
-            is Inbound.SetAggressive -> if (event.enabled != aggressive) {
+            is Inbound.SetAggressive -> {
                 aggressive = event.enabled
-                scanner?.start(event.enabled)
+                if (scanMode != null && scanMode != aggressive) startScan()
+            }
+            Inbound.RestartScan -> {
+                scanRetryPending = false
+                if (adapter?.isEnabled == true && scanner != null) startScan()
             }
         }
     }
@@ -398,12 +415,29 @@ class BleTransport(
             }
         }
         advertiser = (advertiser ?: Advertiser(adapter)).also { it.start(advert, urgent = advert.carryingSos) }
-        scanner = (scanner ?: Scanner(adapter) { inbound.trySend(Inbound.Sighted(it)) }).also { it.start(aggressive) }
+        scanner = scanner ?: Scanner(adapter) { inbound.trySend(Inbound.Sighted(it)) }
+        startScan()
         _radio.value = RadioState(bluetoothOn = true, advertising = true, scanning = true, links = links.size)
+    }
+
+    private fun startScan() {
+        if (scanner?.start(aggressive) == true) {
+            scanMode = aggressive
+            return
+        }
+        // Refused (too many starts in 30 s): the old mode keeps running, so try again later.
+        if (!scanRetryPending) {
+            scanRetryPending = true
+            scope.launch {
+                delay(SCAN_RETRY)
+                inbound.send(Inbound.RestartScan)
+            }
+        }
     }
 
     private fun radiosDown() {
         scanner?.stop()
+        scanMode = null
         advertiser?.stop()
         server?.close()
         server = null
@@ -423,7 +457,8 @@ class BleTransport(
     private suspend fun maintain() {
         while (true) {
             delay(SCAN_RESTART)
-            if (adapter?.isEnabled == true) scanner?.start(aggressive)
+            // Through the inbound queue: Scanner and scanMode belong to that coroutine.
+            inbound.send(Inbound.RestartScan)
         }
     }
 
@@ -448,6 +483,7 @@ class BleTransport(
         const val FALLBACK_AFTER = 15_000L
         const val RECONNECT_DELAY = 1_000L
         const val SIGHTING_TTL = 30_000L
+        const val SCAN_RETRY = 30_000L
         const val SCAN_RESTART = 10 * 60_000L
     }
 }
