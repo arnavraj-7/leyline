@@ -17,6 +17,7 @@ import dev.leyline.mesh.Location
 import dev.leyline.mesh.MessageBody
 import dev.leyline.mesh.MessageId
 import dev.leyline.mesh.NodeId
+import dev.leyline.mesh.P256
 import dev.leyline.mesh.Packet
 import dev.leyline.mesh.PacketCodec
 import dev.leyline.mesh.PacketSignatures
@@ -272,7 +273,10 @@ class MeshController(
         if (destination == NodeId.BROADCAST) return body.copy(boxKey = boxKeys.publicKey) to false
         val theirs = repository.boxKey(destination) ?: return body.copy(boxKey = boxKeys.publicKey) to false
         val inner = MessageBody(body.text, body.location)
-        val sealed = Sealing.seal(inner.encode(), boxKeys.private, theirs, self, destination)
+        // A key that isn't a point on the curve makes seal throw; send it readable rather
+        // than crash. It is marked unencrypted, so the UI doesn't claim otherwise.
+        val sealed = runCatching { Sealing.seal(inner.encode(), boxKeys.private, theirs, self, destination) }.getOrNull()
+            ?: return body.copy(boxKey = boxKeys.publicKey) to false
         return MessageBody("", senderName = body.senderName, boxKey = boxKeys.publicKey, sealed = sealed) to true
     }
 
@@ -311,6 +315,8 @@ class MeshController(
 
     fun locationPermitted(): Boolean = locator.permitted()
 
+    private fun isCurvePoint(key: ByteArray): Boolean = runCatching { P256.decompress(key) }.isSuccess
+
     fun lastKnownLocation(): Location? = locator.lastKnown()
 
     private suspend fun onEvent(event: MeshEvent) {
@@ -324,8 +330,9 @@ class MeshController(
             }
             is MeshEvent.Delivered -> {
                 val received = runCatching { MessageBody.decode(event.packet.payload) }.getOrNull() ?: return
-                // Signed by the origin, so this key really is theirs.
-                received.boxKey?.let { repository.rememberBoxKey(event.packet.origin, it, event.receivedAt) }
+                // Signed by the origin, so this key really is theirs. Signed isn't the same as
+                // well formed, though: keep only a key that decodes to a point on the curve.
+                received.boxKey?.takeIf(::isCurvePoint)?.let { repository.rememberBoxKey(event.packet.origin, it, event.receivedAt) }
                 val sender = received.senderName ?: event.packet.origin.toString()
                 received.senderName?.let { topologyTracker.onName(event.packet.origin, it) }
                 // A ring request is a command, not something to show; the router already deduplicated it.
