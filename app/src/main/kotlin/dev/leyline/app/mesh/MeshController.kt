@@ -1,6 +1,7 @@
 package dev.leyline.app.mesh
 
 import android.content.Context
+import android.util.Log
 import dev.leyline.app.data.LeylineDatabase
 import dev.leyline.app.data.MessageRepository
 import dev.leyline.app.data.RoomKeyPins
@@ -9,6 +10,8 @@ import dev.leyline.app.data.Settings
 import dev.leyline.ble.BleTransport
 import dev.leyline.ble.RadioState
 import dev.leyline.ble.Sighting
+import dev.leyline.ble.WifiDirectLink
+import dev.leyline.mesh.EscalatingTransport
 import dev.leyline.mesh.MeshConfig
 import dev.leyline.mesh.MeshEvent
 import dev.leyline.mesh.MeshNode
@@ -56,8 +59,9 @@ data class BlockedPacket(
 )
 
 /**
- * Owns the running mesh for the whole app process: one [BleTransport], one
- * [MeshNode], and the glue to the database, settings and notifications. The
+ * Owns the running mesh for the whole app process: one [BleTransport] (with a
+ * [WifiDirectLink] for big backlogs), one [MeshNode], and the glue to the
+ * database, settings and notifications. The
  * foreground service keeps the process alive; the UI just observes these flows.
  *
  * Manual dependency injection: [dev.leyline.app.AppContainer] builds this once
@@ -73,7 +77,7 @@ class MeshController(
     private val notifier: Notifier,
     private val appScope: CoroutineScope,
 ) {
-    private class Session(val transport: BleTransport, val node: MeshNode, val scope: CoroutineScope)
+    private class Session(val transport: BleTransport, val wifi: WifiDirectLink, val node: MeshNode, val scope: CoroutineScope)
 
     val self: NodeId = signer.nodeId
     private val outboxDao = database.outbox()
@@ -98,6 +102,11 @@ class MeshController(
 
     private val _radio = MutableStateFlow(RadioState())
     val radio: StateFlow<RadioState> = _radio.asStateFlow()
+
+    private val _wifiLinks = MutableStateFlow<Set<NodeId>>(emptySet())
+
+    /** Neighbours being served over Wi-Fi Direct right now (a big backlog is draining). */
+    val wifiLinks: StateFlow<Set<NodeId>> = _wifiLinks.asStateFlow()
 
     private val _sightings = MutableStateFlow<Map<NodeId, Sighting>>(emptyMap())
     val sightings: StateFlow<Map<NodeId, Sighting>> = _sightings.asStateFlow()
@@ -132,16 +141,19 @@ class MeshController(
         if (session != null) return
         val scope = CoroutineScope(appScope.coroutineContext + SupervisorJob(appScope.coroutineContext[Job]))
         val transport = BleTransport(context, self, scope, name = { settings.name.value })
+        // Idle unless Wi-Fi is on and its permission granted; then only for backlogs over ~24 KB.
+        val wifi = WifiDirectLink(context, self, scope)
+        val link = EscalatingTransport(self, transport, wifi, scope, System::currentTimeMillis, log = { Log.i(TAG, it) })
         val node = MeshNode(
             self,
-            transport,
+            link,
             outbox,
             clock = System::currentTimeMillis,
             config = MeshConfig(requireSignatures = true),
             signer = signer,
             pins = pins,
         )
-        session = Session(transport, node, scope)
+        session = Session(transport, wifi, node, scope)
         _running.value = true
         battery.start()
 
@@ -157,6 +169,7 @@ class MeshController(
                 }
             }
             launch { transport.radio.collect { _radio.value = it } }
+            launch { link.bulkPeers.collect { _wifiLinks.value = it } }
             launch { transport.sightings.collect { _sightings.value = it } }
             launch { settings.blocked.collect { node.setBlocked(it) } }
             launch {
@@ -188,6 +201,7 @@ class MeshController(
                 }
             }
             node.start(this, repository.knownIds())
+            wifi.start()
             transport.start()
         }
     }
@@ -197,11 +211,13 @@ class MeshController(
         val current = session ?: return
         session = null
         current.transport.stop()
+        current.wifi.stop()
         current.scope.cancel()
         battery.stop()
         _running.value = false
         _neighbours.value = emptySet()
         _radio.value = RadioState()
+        _wifiLinks.value = emptySet()
     }
 
     /** The UI is on screen: scan at low latency so phones find each other in about a second. */
@@ -404,6 +420,7 @@ class MeshController(
     }
 
     private companion object {
+        const val TAG = "LeylineMesh"
         val SOS_LIFETIME_MILLIS = MeshConfig().sosLifetimeMillis
     }
 }
