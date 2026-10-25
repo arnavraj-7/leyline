@@ -20,6 +20,10 @@ class ForwardQueue(private val capacity: Int) {
 
     val size: Int get() = queued.size
 
+    /** Encoded size of everything queued: what the link still has to carry. */
+    var bytes: Int = 0
+        private set
+
     fun isEmpty(): Boolean = queued.isEmpty()
 
     operator fun contains(id: MessageId): Boolean = id in queued
@@ -33,12 +37,14 @@ class ForwardQueue(private val capacity: Int) {
             val lane = lanes.getValue(packet.priority)
             val index = lane.indexOfFirst { it.id == packet.id }
             if (index < 0 || lane[index].ttl >= packet.ttl) return false
+            bytes += PacketCodec.encodedSize(packet) - PacketCodec.encodedSize(lane[index])
             lane[index] = packet
             return true
         }
         if (queued.size >= capacity && !evictBelow(packet.priority)) return false
         lanes.getValue(packet.priority).addLast(packet)
         queued += packet.id
+        bytes += PacketCodec.encodedSize(packet)
         return true
     }
 
@@ -46,6 +52,7 @@ class ForwardQueue(private val capacity: Int) {
         for (priority in DRAIN_ORDER) {
             val packet = lanes.getValue(priority).removeFirstOrNull() ?: continue
             queued -= packet.id
+            bytes -= PacketCodec.encodedSize(packet)
             return packet
         }
         return null
@@ -53,7 +60,9 @@ class ForwardQueue(private val capacity: Int) {
 
     fun remove(id: MessageId): Boolean {
         if (id !in queued) return false
-        lanes.values.forEach { lane -> lane.removeAll { it.id == id } }
+        lanes.values.forEach { lane ->
+            lane.removeAll { packet -> (packet.id == id).also { if (it) bytes -= PacketCodec.encodedSize(packet) } }
+        }
         queued -= id
         return true
     }
@@ -61,6 +70,7 @@ class ForwardQueue(private val capacity: Int) {
     fun clear() {
         lanes.values.forEach { it.clear() }
         queued.clear()
+        bytes = 0
     }
 
     // Drops the oldest packet of the lowest priority below [priority], if there is one.
@@ -69,6 +79,7 @@ class ForwardQueue(private val capacity: Int) {
             if (lower >= priority) return false
             val victim = lanes.getValue(lower).removeFirstOrNull() ?: continue
             queued -= victim.id
+            bytes -= PacketCodec.encodedSize(victim)
             return true
         }
         return false

@@ -441,8 +441,11 @@ class MeshNode(
     private suspend fun drain(link: Link) {
         for (signal in link.wake) {
             while (true) {
-                val packet = lock.withLock { link.queue.poll()?.also { link.inFlight = it } } ?: break
+                val (packet, waiting) = lock.withLock {
+                    link.queue.poll()?.also { link.inFlight = it }?.let { it to link.queue.bytes }
+                } ?: break
                 val bytes = PacketCodec.encode(packet)
+                transport.backlog(link.id, waiting + bytes.size)
                 var ok = false
                 for (attempt in 0..config.writeRetries) {
                     if (attempt > 0) {

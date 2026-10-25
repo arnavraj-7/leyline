@@ -29,4 +29,11 @@ interface Transport {
      * the write. Returns false if the neighbour is gone or the write failed.
      */
     suspend fun send(neighbour: NodeId, bytes: ByteArray): Boolean
+
+    /**
+     * Hint from the mesh before each send: [bytes] are waiting for [neighbour],
+     * the packet about to go included. A transport with a faster radio can use it
+     * to switch over for a big backlog (Wi-Fi Direct on phones); others ignore it.
+     */
+    fun backlog(neighbour: NodeId, bytes: Int) {}
 }

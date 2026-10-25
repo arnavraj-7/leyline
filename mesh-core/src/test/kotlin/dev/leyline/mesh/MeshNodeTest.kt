@@ -274,4 +274,19 @@ class MeshNodeTest {
         assertTrue(b.delivered.isEmpty())
         assertEquals(1, b.node.stats.value.duplicates)
     }
+
+    @Test
+    fun `the transport hears how much is still waiting before each send`() = runTest {
+        val net = FakeNetwork(this)
+        val (a) = (1..2).map { net.add(it) }
+        val sent = List(20) { a.node.send(ByteArray(1_000)) }
+        net.link(1, 2) // B arrives to a backlog of 20 carried messages
+        net.settle()
+
+        val hints = net.backlogs.filter { it.first == NodeId(1) }.map { it.second }
+        val each = PacketCodec.encodedSize(sent.first())
+        assertEquals(20, hints.size)
+        assertEquals(20 * each, hints.first())
+        assertEquals(each, hints.last())
+    }
 }

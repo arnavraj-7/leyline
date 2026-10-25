@@ -93,4 +93,23 @@ class ForwardQueueTest {
         assertEquals(b, queue.poll())
         assertTrue(queue.isEmpty())
     }
+
+    @Test
+    fun `bytes follow every way a packet enters or leaves`() {
+        val queue = ForwardQueue(2)
+        val a = packet().copy(payload = ByteArray(100))
+        val b = packet().copy(payload = ByteArray(50))
+        queue.offer(a)
+        queue.offer(b)
+        assertEquals(PacketCodec.encodedSize(a) + PacketCodec.encodedSize(b), queue.bytes)
+
+        // A better copy with a longer path is swapped in place, and costs 4 bytes per relay.
+        queue.offer(b.copy(ttl = b.ttl + 1, path = listOf(NodeId(9))))
+        assertEquals(PacketCodec.encodedSize(a) + PacketCodec.encodedSize(b) + 4, queue.bytes)
+
+        queue.offer(packet(Priority.SOS)) // evicts a
+        queue.remove(b.id)
+        queue.poll()
+        assertEquals(0, queue.bytes)
+    }
 }

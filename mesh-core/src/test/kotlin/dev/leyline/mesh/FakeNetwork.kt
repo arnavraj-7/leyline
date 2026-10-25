@@ -22,6 +22,9 @@ class FakeNetwork(private val test: TestScope, private val latencyMillis: Long =
     /** Packets written per sender, to measure flooding cost. */
     val writes = HashMap<NodeId, Int>()
 
+    /** Every backlog hint, as (sender, bytes waiting). */
+    val backlogs = mutableListOf<Pair<NodeId, Int>>()
+
     /** The next n writes fail as if the radio timed out, while the link stays up. */
     var failWrites = 0
 
@@ -40,6 +43,10 @@ class FakeNetwork(private val test: TestScope, private val latencyMillis: Long =
             writes[self] = (writes[self] ?: 0) + 1
             transports.getValue(neighbour).inbox.send(LinkEvent.Received(self, bytes))
             return true
+        }
+
+        override fun backlog(neighbour: NodeId, bytes: Int) {
+            backlogs += self to bytes
         }
     }
 
