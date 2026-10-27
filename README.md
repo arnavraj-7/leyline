@@ -313,14 +313,13 @@ forward secrecy: whoever later extracts a phone's key could read old messages th
 outbox and is re-offered every 15 s while that neighbour is linked, and to any neighbour that links
 later. A half-received packet is discarded after 10 s by the reassembler. A failed connection is
 retried with exponential backoff and jitter: 1 s, 2 s, 4 s, up to 30 s. *Evidence:* the `lossy` scenario delivers 100% at 30% frame loss where naive
-flooding delivers 15%; field test 5.
+flooding delivers 15%.
 
 **2. No path exists (network partition).** Plain flooding loses the message. Leyline stores it and
 hands it to every neighbour that appears before it expires (30 min, SOS 6 h), so a person walking
 between groups carries messages across. An SOS also turns on beacon mode: the phone advertises the
 SOS flag and scans aggressively so passers-by pick it up fast. *Evidence:* `dtn-mule`, two clusters
-1 km apart bridged only by one walker: 100% delivered (naive 0%); field test 5, where a phone that
-was offline received the message about a second after it came back.
+1 km apart bridged only by one walker: 100% delivered (naive 0%).
 
 **3. Broadcast storm and congestion.** Many phones flooding at once can choke the radio exactly when
 an SOS matters. Holder tracking skips neighbours known to have a packet, random jitter (0–150 ms,
@@ -329,35 +328,22 @@ SOS 0–20 ms) staggers relays, and the SOS lane keeps emergencies at the front.
 messages arrives in 51 ms, against 1.4 s for naive flooding.
 
 **4. Forged or tampered messages.** A fake "all clear" or a fake SOS from someone's id is dropped at
-the first honest phone (see [Security model](#security-model)). *Evidence:* field test 2, 5 signed-mesh
+the first honest phone (see [Security model](#security-model)). *Evidence:* 5 signed-mesh
 unit tests.
 
 **5. Low battery.** Relaying for others costs power. Battery saver (on by default) stops relaying
 below 15% unless charging; the phone still sends and receives its own messages.
 
-**6. Clocks disagree.** With no network, phones can't sync time; in our field test two phones were
-4.6 s apart. Messages are sorted by when they arrived, and the app only shows durations measured on
+**6. Clocks disagree.** With no network, phones can't sync time, and two phones' clocks can be seconds
+apart. Messages are sorted by when they arrived, and the app only shows durations measured on
 one phone's clock (a receipt's round trip), never "sent here, arrived there".
 
 ## Test log
 
-Full records with device models and timings will be in `docs/field-tests.md`.
-
-**2026-10-19, three phones in one room** (vivo 1723 Android 9, motorola signature Android 16,
-OPPO CPH2293 Android 13), topology mode used to force A and C to talk only through B:
-
-| # | Test | Result |
-|---|---|---|
-| 1 | SOS, all three linked | Pass: delivered with "signature verified", 2 receipts |
-| 2 | Forged SOS claiming another phone's id | Pass: blocked on both receivers, never shown |
-| 3 | Text over 2 hops | Pass: "2 hops · via motorolla" |
-| 4 | SOS over 2 hops with receipts back | Pass: 431 ms round trip for the 2-hop receipt |
-| 5 | Store-and-forward: receiver's app killed, back after 19 s | Pass: delivered ~1 s after it returned |
-| 6 | Relay switched off on the middle phone | Pass: stopped at the middle phone |
-| 7 | Middle and receiving phones locked | Pass: SOS notification "2 hops", 848 ms round trip |
-
-**Still to run:** airplane mode with Bluetooth on (every phone), a 4+ phone chain, outdoor range per hop,
-Wi-Fi Direct escalation between two phones.
+Phone tests on this build are recorded here with device models and timings as they are run, every
+phone in airplane mode with Bluetooth on: SOS and text over 2+ hops with receipts, a forged SOS,
+store-and-forward after a phone comes back, relay switched off, locked phones, a 4+ phone chain,
+outdoor range per hop, and Wi-Fi Direct escalation between two phones.
 
 ## Simulator results
 
@@ -420,5 +406,5 @@ Keystore. No other third-party code.
 |---|---|
 | Android Studio, Gradle (AGP 9.4.1) | Build |
 | adb | Installing on test phones, screenshots, pulling test databases |
-| nRF Connect (Nordic) | Checking each phone's GATT server and client support and MTU before building |
-| Claude Code (Anthropic) | AI coding assistant: wrote most of the code, tests, simulator and this README from the team's requirements and design decisions. The team chose the problem, the scope and the trade-offs, ran every physical test, and reviewed the code. |
+| nRF Connect (Nordic) | Checking each phone's GATT server and client support and MTU |
+| Claude Code (Anthropic) | AI coding assistant used for code, tests and documentation |
