@@ -110,85 +110,6 @@ fun MeshScreen(viewModel: MeshViewModel) {
             }
         }
 
-        SectionLabel("Results")
-        val r = state.results
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile(
-                "Delivered",
-                if (r.asked == 0) "—" else "${100 * r.confirmed / r.asked}% · ${r.confirmed}/${r.asked}",
-                Modifier.weight(1f),
-                good = if (r.asked == 0) null else r.confirmed == r.asked,
-            )
-            StatTile("Avg hops in", r.averageHops?.let { "%.1f".format(Locale.US, it) } ?: "—", Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile("Round trip", r.medianRoundTripMillis?.let(::formatDuration) ?: "—", Modifier.weight(1f))
-            StatTile(
-                "Battery",
-                r.drainPerHour?.let { "%.1f%%/h".format(Locale.US, it.coerceAtLeast(0.0)) } ?: if (state.battery.charging) "Charging" else "Measuring…",
-                Modifier.weight(1f),
-            )
-        }
-        Text(
-            "Delivered: SOS and private messages with a receipt back. Round trip: median, send to receipt, timed on this phone alone.",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        SectionLabel("Range test")
-        RangeTest(state, viewModel::freshLocation)
-
-        SectionLabel("Packet log")
-        PacketLog(state)
-
-        SectionLabel("Radio")
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            val r = state.radio
-            StatTile("Bluetooth", if (r.bluetoothOn) "On" else "Off", Modifier.weight(1f), good = r.bluetoothOn)
-            StatTile("Advertising", if (r.advertising) "On" else "Off", Modifier.weight(1f), good = r.advertising)
-            StatTile("Scanning", if (r.scanning) "On" else "Off", Modifier.weight(1f), good = r.scanning)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile(
-                "Battery",
-                "${state.battery.percent}%${if (state.battery.charging) " ⚡" else ""}",
-                Modifier.weight(1f),
-                good = !state.battery.low,
-            )
-            StatTile(
-                "Relay",
-                when {
-                    state.relaying -> "On"
-                    state.battery.low -> "Saving"
-                    else -> "Off"
-                },
-                Modifier.weight(1f),
-                good = state.relaying,
-            )
-            StatTile("Links", "${state.radio.links}", Modifier.weight(1f))
-        }
-
-        SectionLabel("Traffic")
-        val s = state.stats
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile("Sent", "${s.originated}", Modifier.weight(1f))
-            StatTile("Delivered", "${s.delivered}", Modifier.weight(1f))
-            StatTile("Relayed", "${s.relayed}", Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile("Radio writes", "${s.sent}", Modifier.weight(1f))
-            StatTile("Receipts", "${s.receipts}", Modifier.weight(1f))
-            StatTile("Upgrades", "${s.upgrades}", Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile("Duplicates", "${s.duplicates}", Modifier.weight(1f))
-            StatTile("Write fails", "${s.sendFailures}", Modifier.weight(1f), good = s.sendFailures == 0)
-            StatTile("Malformed", "${s.malformed}", Modifier.weight(1f), good = s.malformed == 0)
-        }
-
-        SectionLabel("Security")
-        SecurityCard(state)
-
         SectionLabel("Nearby phones")
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
             Column(Modifier.padding(vertical = 6.dp)) {
@@ -217,6 +138,86 @@ fun MeshScreen(viewModel: MeshViewModel) {
                     }
                 }
             }
+        }
+
+        SectionLabel("Results")
+        val r = state.results
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatTile(
+                "Delivered",
+                if (r.asked == 0) "—" else "${100 * r.confirmed / r.asked}% · ${r.confirmed}/${r.asked}",
+                Modifier.weight(1f),
+                good = if (r.asked == 0) null else r.confirmed == r.asked,
+            )
+            StatTile("Avg hops in", r.averageHops?.let { "%.1f".format(Locale.US, it) } ?: "—", Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatTile("Round trip", r.medianRoundTripMillis?.let(::formatDuration) ?: "—", Modifier.weight(1f))
+            StatTile(
+                "Battery",
+                r.drainPerHour?.let { "%.1f%%/h".format(Locale.US, it.coerceAtLeast(0.0)) } ?: if (state.battery.charging) "Charging" else "Measuring…",
+                Modifier.weight(1f),
+            )
+        }
+        Text(
+            "Delivered: SOS and private messages with a receipt back. Round trip: median, send to receipt, timed on this phone alone.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        val s = state.stats
+        Collapsible("Security", if (s.rejected == 0) "nothing blocked" else "${s.rejected} fakes blocked") {
+            SecurityCard(state)
+        }
+        Collapsible("Packet log", state.trace.firstOrNull()?.let { "last ${formatClock(it.at).take(8)}" } ?: "quiet") {
+            PacketLog(state)
+        }
+        Collapsible("Radio and battery", "${if (state.radio.bluetoothOn) "Bluetooth on" else "Bluetooth off"} · ${state.battery.percent}%") {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val r = state.radio
+                StatTile("Bluetooth", if (r.bluetoothOn) "On" else "Off", Modifier.weight(1f), good = r.bluetoothOn)
+                StatTile("Advertising", if (r.advertising) "On" else "Off", Modifier.weight(1f), good = r.advertising)
+                StatTile("Scanning", if (r.scanning) "On" else "Off", Modifier.weight(1f), good = r.scanning)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatTile(
+                    "Battery",
+                    "${state.battery.percent}%${if (state.battery.charging) " ⚡" else ""}",
+                    Modifier.weight(1f),
+                    good = !state.battery.low,
+                )
+                StatTile(
+                    "Relay",
+                    when {
+                        state.relaying -> "On"
+                        state.battery.low -> "Saving"
+                        else -> "Off"
+                    },
+                    Modifier.weight(1f),
+                    good = state.relaying,
+                )
+                StatTile("Links", "${state.radio.links}", Modifier.weight(1f))
+            }
+        }
+        Collapsible("Traffic", "${s.originated} sent · ${s.relayed} relayed") {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatTile("Sent", "${s.originated}", Modifier.weight(1f))
+                StatTile("Delivered", "${s.delivered}", Modifier.weight(1f))
+                StatTile("Relayed", "${s.relayed}", Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatTile("Radio writes", "${s.sent}", Modifier.weight(1f))
+                StatTile("Receipts", "${s.receipts}", Modifier.weight(1f))
+                StatTile("Upgrades", "${s.upgrades}", Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatTile("Duplicates", "${s.duplicates}", Modifier.weight(1f))
+                StatTile("Write fails", "${s.sendFailures}", Modifier.weight(1f), good = s.sendFailures == 0)
+                StatTile("Malformed", "${s.malformed}", Modifier.weight(1f), good = s.malformed == 0)
+            }
+        }
+        Collapsible("Range test", "signal against distance") {
+            RangeTest(state, viewModel::freshLocation)
         }
         Spacer(Modifier.padding(4.dp))
     }

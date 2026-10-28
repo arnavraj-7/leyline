@@ -100,6 +100,7 @@ fun MessagesScreen(viewModel: MessagesViewModel, openSos: Boolean, onSosHandled:
     var routeFor by rememberSaveable { mutableStateOf<Long?>(null) }
     var findFor by rememberSaveable { mutableStateOf<Long?>(null) }
     val sosDraft by viewModel.sosDraft.collectAsStateWithLifecycle()
+    var showDetails by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
 
@@ -149,12 +150,19 @@ fun MessagesScreen(viewModel: MessagesViewModel, openSos: Boolean, onSosHandled:
             // Keyboard open: give the conversation the room; SOS comes back when it closes.
             AnimatedVisibility(visible = !WindowInsets.isImeVisible) {
                 Column {
-                    SosDetailsPicker(
-                        sosDraft,
-                        onKind = viewModel::setSosKind,
-                        onPeople = viewModel::setSosPeople,
-                        onInjured = viewModel::toggleInjured,
-                    )
+                    // Triage is optional: one quiet link until someone wants it, so the button stays the focus.
+                    if (showDetails || sosDraft.toDetails() != null) {
+                        SosDetailsPicker(
+                            sosDraft,
+                            onKind = viewModel::setSosKind,
+                            onPeople = viewModel::setSosPeople,
+                            onInjured = viewModel::toggleInjured,
+                        )
+                    } else {
+                        TextButton(onClick = { showDetails = true }, modifier = Modifier.padding(start = 4.dp)) {
+                            Text("+ Add SOS details: what happened, how many, anyone hurt", style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
                     SosButton(enabled = state.running) { viewModel.send(draft, sos = true) { if (it) draft = "" } }
                 }
             }

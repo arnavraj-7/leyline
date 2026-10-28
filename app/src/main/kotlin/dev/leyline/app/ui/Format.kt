@@ -14,19 +14,19 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 object MeshColors {
-    val sos = Color(0xFFF43F5E)
-    val linked = Color(0xFF22C55E)
-    val idle = Color(0xFF94A3B8)
-    val relay = Color(0xFF818CF8)
-    val mesh = Color(0xFF2DD4BF)
-    val warning = Color(0xFFF59E0B)
+    val sos = Color(0xFFE5484D)
+    val linked = Color(0xFF4CB782)
+    val idle = Color(0xFF8B8D94)
+    val relay = Color(0xFF8E94D8)
+    val mesh = Color(0xFF5FB8AC)
+    val warning = Color(0xFFD4A24C)
 
     /** Radar background: always dark, in both themes, so glowing links read well. */
-    val radar = Color(0xFF0B0B0E)
+    val radar = Color(0xFF101114)
 
     private val avatars = listOf(
-        Color(0xFF0EA5E9), Color(0xFF8B5CF6), Color(0xFFF97316), Color(0xFF10B981),
-        Color(0xFFEC4899), Color(0xFF6366F1), Color(0xFFEAB308), Color(0xFF14B8A6),
+        Color(0xFF5B9BD5), Color(0xFF9B87D6), Color(0xFFD98C5F), Color(0xFF5DB38A),
+        Color(0xFFD47FA6), Color(0xFF7C86D9), Color(0xFFC9A94E), Color(0xFF5AAFA6),
     )
 
     /** Stable colour per node, so a person keeps their colour across screens and phones. */

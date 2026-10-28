@@ -106,7 +106,8 @@ fun SettingsScreen(viewModel: SettingsViewModel, onStartMesh: () -> Unit, onStop
             }
         }
 
-        SectionLabel("Topology mode")
+        // Demo tools: folded away so everyday settings come first.
+        Collapsible("Topology mode", nodes.count { it.blocked }.let { if (it == 0) "for multi-hop demos" else "$it blocked" }) {
         Group {
             Text(
                 "Treat chosen phones as out of range, to force multi-hop when everyone is in one room. Block on both phones of a pair.",
@@ -134,8 +135,9 @@ fun SettingsScreen(viewModel: SettingsViewModel, onStartMesh: () -> Unit, onStop
                 }
             }
         }
+        }
 
-        SectionLabel("Security test")
+        Collapsible("Security test", "try to fake an SOS") {
         Group {
             Text(
                 "Every message is signed with a key kept in this phone's secure hardware. Try to fake one: this sends an SOS that claims to come from another phone. Every receiver should drop it.",
@@ -169,6 +171,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onStartMesh: () -> Unit, onStop
                 Divider()
                 Text(it, Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
             }
+        }
         }
 
         SectionLabel("Service")
