@@ -60,7 +60,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onStartMesh: () -> Unit, onStop
                 Column(Modifier.weight(1f)) {
                     Text(name, style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "Node ${viewModel.mesh.self} · shown to people you message",
+                        "Node ${viewModel.mesh.self} · app v${viewModel.mesh.appVersion} · shown to people you message",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

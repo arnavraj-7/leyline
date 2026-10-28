@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +28,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -49,14 +53,19 @@ import dev.leyline.app.mesh.TraceEntry
 import dev.leyline.app.mesh.TraceKind
 import dev.leyline.mesh.NodeId
 import dev.leyline.mesh.Rejection
+import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sin
+
+private enum class MeshView(val label: String) { HOPS("Hops"), COMPASS("Compass"), MAP("Map") }
 
 @Composable
 fun MeshScreen(viewModel: MeshViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var view by rememberSaveable { mutableStateOf(MeshView.HOPS) }
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -69,15 +78,29 @@ fun MeshScreen(viewModel: MeshViewModel) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Live mesh", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                        val located = state.topology.positions.size - (if (state.topology.self in state.topology.positions) 1 else 0)
                         Text(
-                            "${state.topology.direct.size} linked · ${state.topology.hops.size} known · packets animate along their route",
+                            when {
+                                view == MeshView.HOPS -> "${state.topology.direct.size} linked · ${state.topology.hops.size} known · rings are hops"
+                                state.topology.self !in state.topology.positions -> "Waiting for your GPS fix · turn location on"
+                                else -> "$located with GPS · real direction and distance, north up"
+                            },
                             color = Color.White.copy(alpha = 0.6f),
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
                     if (state.carryingSos) Pill("SOS BEACON", MeshColors.sos, filled = true)
                 }
-                MeshMap(state, Modifier.fillMaxWidth().aspectRatio(1f).padding(top = 8.dp))
+                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MeshView.entries.forEach {
+                        Pill(it.label, if (it == view) MeshColors.mesh else Color.White.copy(alpha = 0.5f), Modifier.clickable { view = it }.padding(vertical = 4.dp), filled = it == view)
+                    }
+                }
+                if (view == MeshView.MAP) {
+                    OfflineMap(state, Modifier.fillMaxWidth().aspectRatio(1f).padding(top = 8.dp))
+                } else {
+                    MeshMap(state, compass = view == MeshView.COMPASS, Modifier.fillMaxWidth().aspectRatio(1f).padding(top = 8.dp))
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Legend(MeshColors.linked, "Linked")
                     Legend(MeshColors.relay, "Via relays")
@@ -86,6 +109,34 @@ fun MeshScreen(viewModel: MeshViewModel) {
                 }
             }
         }
+
+        SectionLabel("Results")
+        val r = state.results
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatTile(
+                "Delivered",
+                if (r.asked == 0) "—" else "${100 * r.confirmed / r.asked}% · ${r.confirmed}/${r.asked}",
+                Modifier.weight(1f),
+                good = if (r.asked == 0) null else r.confirmed == r.asked,
+            )
+            StatTile("Avg hops in", r.averageHops?.let { "%.1f".format(Locale.US, it) } ?: "—", Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatTile("Round trip", r.medianRoundTripMillis?.let(::formatDuration) ?: "—", Modifier.weight(1f))
+            StatTile(
+                "Battery",
+                r.drainPerHour?.let { "%.1f%%/h".format(Locale.US, it.coerceAtLeast(0.0)) } ?: if (state.battery.charging) "Charging" else "Measuring…",
+                Modifier.weight(1f),
+            )
+        }
+        Text(
+            "Delivered: SOS and private messages with a receipt back. Round trip: median, send to receipt, timed on this phone alone.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        SectionLabel("Range test")
+        RangeTest(state, viewModel::freshLocation)
 
         SectionLabel("Packet log")
         PacketLog(state)
@@ -307,6 +358,9 @@ private fun traceColor(e: TraceEntry): Color = when (e.kind) {
 }
 
 private const val LOG_ROWS = 15
+/** Compass radar sizes: the smallest that fits the farthest phone. */
+private val COMPASS_SCALES = listOf(30.0, 60.0, 150.0, 300.0, 600.0, 1_500.0, 3_000.0, 6_000.0)
+
 private const val TRAIL_HOP_MS = 600f
 private const val TRAIL_FADE_MS = 700f
 
@@ -344,12 +398,12 @@ private fun Legend(color: Color, label: String) {
 }
 
 /**
- * Radar view: we sit at the centre, rings are hop distance, angle is spread
- * evenly per ring. Links between far nodes come from packet paths, so this
+ * Radar view: we sit at the centre. In hop mode rings are hop distance and angle is
+ * spread evenly per ring; in compass mode phones sit at their real GPS direction and distance. Links between far nodes come from packet paths, so this
  * shows topology no single phone can scan.
  */
 @Composable
-private fun MeshMap(state: MeshUiState, modifier: Modifier) {
+private fun MeshMap(state: MeshUiState, compass: Boolean, modifier: Modifier) {
     val measurer = rememberTextMeasurer()
     val topology = state.topology
     val sosNodes = state.sightings.values.filter { it.info.carryingSos }.map { it.info.node }.toSet()
@@ -362,25 +416,44 @@ private fun MeshMap(state: MeshUiState, modifier: Modifier) {
 
     Canvas(modifier) {
         val center = Offset(size.width / 2, size.height / 2)
-        val maxHops = (topology.hops.values.maxOrNull() ?: 1).coerceIn(1, 4)
-        val ringStep = min(size.width, size.height) / 2 * 0.86f / maxHops
-
-        for (ring in 1..maxHops) {
-            drawCircle(Color.White.copy(alpha = 0.10f), radius = ringStep * ring, center = center, style = Stroke(1.dp.toPx()))
-        }
-        // Expanding pulse: we're advertising.
-        drawCircle(MeshColors.mesh.copy(alpha = 0.25f * (1 - sweep)), radius = ringStep * maxHops * sweep, center = center, style = Stroke(2.dp.toPx()))
-
-        // Every node we know, plus in-range phones not yet linked, on ring 1.
-        val hops = topology.hops + state.sightings.keys.filter { it !in topology.hops }.associateWith { 1 }
+        val outer = min(size.width, size.height) / 2 * 0.86f
         val positions = HashMap<NodeId, Offset>()
         positions[topology.self] = center
-        hops.entries.groupBy { it.value.coerceAtMost(maxHops) }.forEach { (ring, nodes) ->
-            nodes.sortedBy { it.key.value }.forEachIndexed { index, (node, _) ->
-                val angle = 2 * PI * index / nodes.size + ring * 0.6 - PI / 2
-                positions[node] = center + Offset((cos(angle) * ringStep * ring).toFloat(), (sin(angle) * ringStep * ring).toFloat())
+        val me = topology.positions[topology.self]
+
+        if (compass && me != null) {
+            // Real geography, north up: each phone at its true direction and distance from us.
+            val offsets = topology.positions.filterKeys { it != topology.self }.mapValues { eastNorthMetres(me, it.value) }
+            val farthest = offsets.values.maxOfOrNull { hypot(it.first, it.second) } ?: 0.0
+            val scale = COMPASS_SCALES.firstOrNull { it >= farthest } ?: farthest
+            for (ring in 1..3) {
+                val radius = outer * ring / 3
+                drawCircle(Color.White.copy(alpha = 0.10f), radius = radius, center = center, style = Stroke(1.dp.toPx()))
+                val label = measurer.measure(formatDistance(scale * ring / 3), TextStyle(fontSize = 9.sp, color = Color.White.copy(alpha = 0.45f)))
+                drawText(label, topLeft = center + Offset(4.dp.toPx(), -radius))
+            }
+            val north = measurer.measure("N", TextStyle(fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold))
+            drawText(north, topLeft = Offset(center.x - north.size.width / 2f, center.y - outer - north.size.height - 2.dp.toPx()))
+            offsets.forEach { (node, en) ->
+                positions[node] = center + Offset((en.first / scale * outer).toFloat(), (-en.second / scale * outer).toFloat())
+            }
+        } else {
+            val maxHops = (topology.hops.values.maxOrNull() ?: 1).coerceIn(1, 4)
+            val ringStep = outer / maxHops
+            for (ring in 1..maxHops) {
+                drawCircle(Color.White.copy(alpha = 0.10f), radius = ringStep * ring, center = center, style = Stroke(1.dp.toPx()))
+            }
+            // Every node we know, plus in-range phones not yet linked, on ring 1.
+            val hops = topology.hops + state.sightings.keys.filter { it !in topology.hops }.associateWith { 1 }
+            hops.entries.groupBy { it.value.coerceAtMost(maxHops) }.forEach { (ring, nodes) ->
+                nodes.sortedBy { it.key.value }.forEachIndexed { index, (node, _) ->
+                    val angle = 2 * PI * index / nodes.size + ring * 0.6 - PI / 2
+                    positions[node] = center + Offset((cos(angle) * ringStep * ring).toFloat(), (sin(angle) * ringStep * ring).toFloat())
+                }
             }
         }
+        // Expanding pulse: we're advertising.
+        drawCircle(MeshColors.mesh.copy(alpha = 0.25f * (1 - sweep)), radius = outer * sweep, center = center, style = Stroke(2.dp.toPx()))
 
         topology.edges.keys.forEach { edge ->
             val a = positions[edge.a] ?: return@forEach

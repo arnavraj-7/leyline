@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files other apps may open: a downloaded update (installer), a range-test CSV (share). -->
+<paths>
+    <files-path name="updates" path="updates/" />
+    <files-path name="rangetest" path="rangetest/" />
+</paths>

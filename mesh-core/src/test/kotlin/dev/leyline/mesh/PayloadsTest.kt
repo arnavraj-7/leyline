@@ -25,6 +25,15 @@ class PayloadsTest {
     }
 
     @Test
+    fun `presence beacon round trips and stays distinct from chat`() {
+        val body = MessageBody("", Location.of(25.4920, 81.8639, 8f), "Ayush", presence = true)
+        val decoded = MessageBody.decode(body.encode())
+        assertEquals(body, decoded)
+        assertEquals(true, decoded.presence)
+        assertEquals(false, MessageBody.decode(MessageBody("hi").encode()).presence)
+    }
+
+    @Test
     fun `non ascii text survives`() {
         val body = MessageBody("मदद चाहिए 🆘")
         assertEquals(body, MessageBody.decode(body.encode()))

@@ -1,5 +1,6 @@
 package dev.leyline.app.mesh
 
+import dev.leyline.mesh.Location
 import dev.leyline.mesh.NodeId
 import dev.leyline.mesh.Packet
 
@@ -23,6 +24,8 @@ data class Topology(
     val edges: Map<Edge, Long> = emptyMap(),
     val hops: Map<NodeId, Int> = emptyMap(),
     val names: Map<NodeId, String> = emptyMap(),
+    /** Last GPS fix per node, ours included, from presence beacons and any message carrying one. */
+    val positions: Map<NodeId, Location> = emptyMap(),
 )
 
 /**
@@ -36,6 +39,7 @@ class TopologyTracker(private val self: NodeId, private val maxAgeMillis: Long =
     private val edges = HashMap<Edge, Long>()
     private val hopsSeen = HashMap<NodeId, Pair<Int, Long>>()
     private val names = HashMap<NodeId, String>()
+    private val positions = HashMap<NodeId, Triple<Location, Long, Long>>()
     private var direct = emptySet<NodeId>()
 
     @Synchronized
@@ -48,6 +52,13 @@ class TopologyTracker(private val self: NodeId, private val maxAgeMillis: Long =
     @Synchronized
     fun onName(node: NodeId, name: String) {
         names[node] = name
+    }
+
+    /** [stamp] is the fix's time on the sender's clock: a carried, older beacon must not replace a newer one. */
+    @Synchronized
+    fun onPosition(node: NodeId, location: Location, now: Long, stamp: Long = now) {
+        val previous = positions[node]
+        if (previous == null || stamp >= previous.third) positions[node] = Triple(location, now, stamp)
     }
 
     @Synchronized
@@ -63,12 +74,14 @@ class TopologyTracker(private val self: NodeId, private val maxAgeMillis: Long =
     fun snapshot(now: Long): Topology {
         edges.values.removeAll { now - it > maxAgeMillis }
         hopsSeen.values.removeAll { now - it.second > maxAgeMillis }
+        positions.values.removeAll { now - it.second > maxAgeMillis }
         return Topology(
             self = self,
             direct = direct,
             edges = edges.toMap(),
             hops = hopsSeen.mapValues { it.value.first } + direct.associateWith { 1 },
             names = names.toMap(),
+            positions = positions.mapValues { it.value.first },
         )
     }
 

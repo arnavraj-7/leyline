@@ -22,7 +22,7 @@ object MeshColors {
     val warning = Color(0xFFF59E0B)
 
     /** Radar background: always dark, in both themes, so glowing links read well. */
-    val radar = Color(0xFF070D19)
+    val radar = Color(0xFF0B0B0E)
 
     private val avatars = listOf(
         Color(0xFF0EA5E9), Color(0xFF8B5CF6), Color(0xFFF97316), Color(0xFF10B981),
@@ -68,11 +68,27 @@ fun distanceAndBearing(from: Location, to: Location): Pair<Double, String> {
     val dLon = Math.toRadians(to.longitude - from.longitude)
     val a = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2)
     val distance = 2 * r * atan2(sqrt(a), sqrt(1 - a))
-    val y = sin(dLon) * cos(lat2)
-    val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
-    val degrees = (Math.toDegrees(atan2(y, x)) + 360) % 360
+    val degrees = bearingDegrees(from, to)
     val compass = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")[((degrees + 22.5) / 45).toInt() % 8]
     return distance to compass
+}
+
+/** Initial great-circle bearing from [from] to [to], degrees clockwise from true north. */
+fun bearingDegrees(from: Location, to: Location): Double {
+    val lat1 = Math.toRadians(from.latitude)
+    val lat2 = Math.toRadians(to.latitude)
+    val dLon = Math.toRadians(to.longitude - from.longitude)
+    val y = sin(dLon) * cos(lat2)
+    val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+    return (Math.toDegrees(atan2(y, x)) + 360) % 360
+}
+
+/** Metres east and north from [from] to [to]. Flat-earth, fine for the few km a mesh spans. */
+fun eastNorthMetres(from: Location, to: Location): Pair<Double, Double> {
+    val r = 6_371_000.0
+    val east = Math.toRadians(to.longitude - from.longitude) * r * cos(Math.toRadians(from.latitude))
+    val north = Math.toRadians(to.latitude - from.latitude) * r
+    return east to north
 }
 
 fun formatDistance(metres: Double): String {

@@ -59,7 +59,7 @@ data class Response(val sos: MessageId, val status: ResponseStatus)
  * Payload of a [PacketType.MESSAGE].
  *
  * ```
- * flags u8 (bit 0 location, 1 sender name, 2 SOS details, 3 response, 4 ring, 5 box key, 6 sealed)
+ * flags u8 (bit 0 location, 1 sender name, 2 SOS details, 3 response, 4 ring, 5 box key, 6 sealed, 7 presence)
  * [lat i32 | lon i32 | accuracy u16]          if bit 0
  * [name length u8 | name UTF-8]               if bit 1
  * [kind u8 | people u8 | details flags u8]    if bit 2; details bit 0 = someone injured
@@ -77,6 +77,10 @@ data class Response(val sos: MessageId, val status: ResponseStatus)
  * [boxKey] is the sender's public encryption key (see [Sealing]). It rides in
  * the signed packet, so a relay can't replace it with its own. [sealed] is a
  * whole inner MessageBody encrypted for the destination; [text] is then empty.
+ *
+ * [presence] marks a "here I am" beacon: just a location and a name, sent every
+ * minute so the map can place phones by real direction and distance. It is a
+ * flag, not a packet type, so relays need nothing new; receivers don't show it as chat.
  */
 data class MessageBody(
     val text: String,
@@ -87,6 +91,7 @@ data class MessageBody(
     val ring: MessageId? = null,
     val boxKey: ByteArray? = null,
     val sealed: ByteArray? = null,
+    val presence: Boolean = false,
 ) {
     init {
         require(boxKey == null || boxKey.size == P256.PUBLIC_KEY_SIZE) { "box key must be ${P256.PUBLIC_KEY_SIZE} bytes" }
@@ -97,14 +102,14 @@ data class MessageBody(
     override fun equals(other: Any?): Boolean =
         other is MessageBody && text == other.text && location == other.location && senderName == other.senderName &&
             details == other.details && response == other.response && ring == other.ring &&
-            boxKey.contentEquals(other.boxKey) && sealed.contentEquals(other.sealed)
+            boxKey.contentEquals(other.boxKey) && sealed.contentEquals(other.sealed) && presence == other.presence
 
     override fun hashCode(): Int = text.hashCode() * 31 + (sealed?.contentHashCode() ?: 0)
 
     fun encode(): ByteArray {
         val text = text.encodeToByteArray()
         val name = senderName?.takeIf { it.isNotBlank() }?.let { utf8Prefix(it, MAX_NAME_BYTES) }
-        var flags = 0
+        var flags = if (presence) FLAG_PRESENCE else 0
         var size = 1 + text.size
         if (location != null) {
             flags = flags or FLAG_LOCATION
@@ -173,6 +178,7 @@ data class MessageBody(
         private const val FLAG_RING = 0x10
         private const val FLAG_BOX_KEY = 0x20
         private const val FLAG_SEALED = 0x40
+        private const val FLAG_PRESENCE = 0x80
         private const val LOCATION_SIZE = 10
         private const val DETAILS_SIZE = 3
         private const val RESPONSE_SIZE = 9
@@ -182,7 +188,7 @@ data class MessageBody(
         fun decode(bytes: ByteArray): MessageBody {
             val buf = ByteBuffer.wrap(bytes)
             try {
-                val flags = buf.get().toInt()
+                val flags = buf.get().toUByte().toInt()
                 val location = if (flags and FLAG_LOCATION != 0) {
                     Location(buf.getInt(), buf.getInt(), buf.getShort().toUShort().toInt())
                 } else {
@@ -211,10 +217,11 @@ data class MessageBody(
                 val ring = if (flags and FLAG_RING != 0) MessageId(buf.getLong()) else null
                 val boxKey = if (flags and FLAG_BOX_KEY != 0) ByteArray(P256.PUBLIC_KEY_SIZE).also { buf.get(it) } else null
                 val rest = ByteArray(buf.remaining()).also { buf.get(it) }
+                val presence = flags and FLAG_PRESENCE != 0
                 return if (flags and FLAG_SEALED != 0) {
-                    MessageBody("", location, name, details, response, ring, boxKey, sealed = rest)
+                    MessageBody("", location, name, details, response, ring, boxKey, sealed = rest, presence = presence)
                 } else {
-                    MessageBody(rest.decodeToString(), location, name, details, response, ring, boxKey)
+                    MessageBody(rest.decodeToString(), location, name, details, response, ring, boxKey, presence = presence)
                 }
             } catch (e: BufferUnderflowException) {
                 throw MalformedPacketException("truncated message body")

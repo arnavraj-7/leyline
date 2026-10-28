@@ -88,6 +88,7 @@ class MeshController(
     private val topologyTracker = TopologyTracker(self)
     private val trace = PacketTrace(self)
     private val alarm = Alarm(context, appScope)
+    private val updates = UpdateShare(context) { Log.i(TAG, it) }
     private var session: Session? = null
     private var uiVisible = false
 
@@ -132,6 +133,14 @@ class MeshController(
     /** A rescuer asked this phone to ring so they can find it. */
     val ringing: StateFlow<Boolean> = alarm.ringing
 
+    /** A newer build passed on by a neighbour: downloading, or ready to install. */
+    val update: StateFlow<UpdateState> = updates.state
+
+    /** Our build number, which every neighbour is told. */
+    val appVersion: Int = updates.installed
+
+    fun installUpdate() = updates.install()
+
     private val _carryingSos = MutableStateFlow(false)
     val carryingSos: StateFlow<Boolean> = _carryingSos.asStateFlow()
 
@@ -146,7 +155,7 @@ class MeshController(
         val link = EscalatingTransport(self, transport, wifi, scope, System::currentTimeMillis, log = { Log.i(TAG, it) })
         val node = MeshNode(
             self,
-            link,
+            updates.attach(link, scope),
             outbox,
             clock = System::currentTimeMillis,
             config = MeshConfig(requireSignatures = true),
@@ -198,6 +207,13 @@ class MeshController(
                     refreshAdvert()
                     publishTopology()
                     delay(10_000)
+                }
+            }
+            // Presence beacon: where we are, once a minute, so others' maps show real direction.
+            launch {
+                while (true) {
+                    if (settings.shareLocation.value) sendPresence(node)
+                    delay(PRESENCE_INTERVAL_MILLIS)
                 }
             }
             node.start(this, repository.knownIds())
@@ -333,11 +349,22 @@ class MeshController(
         return current.node.neighbours.value.count { current.transport.send(it, bytes) }
     }
 
+    private suspend fun sendPresence(node: MeshNode) {
+        val location = locator.current() ?: return
+        topologyTracker.onPosition(self, location, System.currentTimeMillis())
+        publishTopology()
+        val body = MessageBody("", location, settings.name.value, presence = true)
+        trace.onSent(node.send(body.encode(), ttl = settings.ttl.value))
+    }
+
     fun locationPermitted(): Boolean = locator.permitted()
 
     private fun isCurvePoint(key: ByteArray): Boolean = runCatching { P256.decompress(key) }.isSuccess
 
     fun lastKnownLocation(): Location? = locator.lastKnown()
+
+    /** A fresh fix, for the range test; waits at most 2 s. */
+    suspend fun currentLocation(): Location? = locator.current(timeoutMillis = 2_000)
 
     private suspend fun onEvent(event: MeshEvent) {
         trace.onEvent(event)
@@ -355,6 +382,12 @@ class MeshController(
                 received.boxKey?.takeIf(::isCurvePoint)?.let { repository.rememberBoxKey(event.packet.origin, it, event.receivedAt) }
                 val sender = received.senderName ?: event.packet.origin.toString()
                 received.senderName?.let { topologyTracker.onName(event.packet.origin, it) }
+                received.location?.let { topologyTracker.onPosition(event.packet.origin, it, event.receivedAt, event.packet.createdAt) }
+                // A presence beacon only moves a dot on the map; it isn't chat.
+                if (received.presence) {
+                    publishTopology()
+                    return
+                }
                 // A ring request is a command, not something to show; the router already deduplicated it.
                 received.ring?.let { sos ->
                     // Only for our own live SOS: otherwise anyone could set off any phone on the mesh.
@@ -421,6 +454,7 @@ class MeshController(
 
     private companion object {
         const val TAG = "LeylineMesh"
+        const val PRESENCE_INTERVAL_MILLIS = 60_000L
         val SOS_LIFETIME_MILLIS = MeshConfig().sosLifetimeMillis
     }
 }

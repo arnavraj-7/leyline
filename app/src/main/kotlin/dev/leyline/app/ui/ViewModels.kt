@@ -1,5 +1,6 @@
 package dev.leyline.app.ui
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.leyline.app.AppContainer
@@ -194,11 +195,25 @@ data class MeshUiState(
     val blocked: List<BlockedPacket> = emptyList(),
     /** Newest first: what the router did with each packet. */
     val trace: List<TraceEntry> = emptyList(),
+    val results: Results = Results(),
 )
 
 private data class Power(val battery: BatteryState, val relaying: Boolean, val carryingSos: Boolean, val blocked: List<BlockedPacket>)
 
-private data class Traffic(val stats: MeshStats, val trace: List<TraceEntry>)
+private data class Traffic(val stats: MeshStats, val trace: List<TraceEntry>, val results: Results)
+
+/** Numbers for the demo, each measured on this phone's own clock. */
+data class Results(
+    /** Our messages that ask for a receipt (SOS and private), and how many got at least one. */
+    val asked: Int = 0,
+    val confirmed: Int = 0,
+    /** Radio links crossed by messages delivered to us. */
+    val averageHops: Double? = null,
+    /** Send to receipt; both ends are our clock, so this is exact. */
+    val medianRoundTripMillis: Long? = null,
+    /** Battery points per hour since we last came off the charger, once there's 6 minutes of data. */
+    val drainPerHour: Double? = null,
+)
 
 /** Mesh health dashboard and live map. */
 class MeshViewModel(container: AppContainer) : ViewModel() {
@@ -206,7 +221,29 @@ class MeshViewModel(container: AppContainer) : ViewModel() {
 
     private val power = combine(mesh.batteryState, mesh.relaying, mesh.carryingSos, mesh.blocked, ::Power)
 
-    private val traffic = combine(mesh.stats, mesh.packetLog, ::Traffic)
+    private var batteryStart: Pair<Int, Long>? = null
+
+    private val results = combine(container.repository.recent, mesh.batteryState) { messages, battery ->
+        val now = SystemClock.elapsedRealtime()
+        if (battery.charging) batteryStart = null else if (batteryStart == null) batteryStart = battery.percent to now
+        val asking = messages.filter { it.message.outgoing && (it.message.sos || it.message.destination != NodeId.BROADCAST.value) }
+        val roundTrips = asking.flatMap { m -> m.receipts.map { it.receivedAt - m.message.createdAt } }.filter { it >= 0 }.sorted()
+        val hops = messages.filter { !it.message.outgoing }.map { it.message.hops }
+        Results(
+            asked = asking.size,
+            confirmed = asking.count { it.receipts.isNotEmpty() },
+            averageHops = hops.takeIf { it.isNotEmpty() }?.average(),
+            medianRoundTripMillis = roundTrips.getOrNull(roundTrips.size / 2),
+            drainPerHour = batteryStart?.let { (percent, since) ->
+                val hours = (now - since) / 3_600_000.0
+                if (hours < 0.1) null else (percent - battery.percent) / hours
+            },
+        )
+    }
+
+    private val traffic = combine(mesh.stats, mesh.packetLog, results, ::Traffic)
+
+    suspend fun freshLocation(): Location? = mesh.currentLocation()
 
     val state: StateFlow<MeshUiState> = combine(
         mesh.topology,
@@ -215,7 +252,7 @@ class MeshViewModel(container: AppContainer) : ViewModel() {
         mesh.radio,
         power,
     ) { topology, sightings, t, radio, p ->
-        MeshUiState(topology, sightings, t.stats, radio, p.battery, p.relaying, p.carryingSos, p.blocked, t.trace)
+        MeshUiState(topology, sightings, t.stats, radio, p.battery, p.relaying, p.carryingSos, p.blocked, t.trace, t.results)
     }.stateIn(viewModelScope, WHILE_VISIBLE, MeshUiState(Topology(mesh.self)))
 }
 

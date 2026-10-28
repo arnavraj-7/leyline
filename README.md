@@ -394,6 +394,7 @@ Every scenario reports 0 repeat deliveries, 0 crashes and 0 malformed packets.
 | AndroidX Lifecycle (ViewModel, runtime Compose) | 2.11.0 | Apache 2.0 | MVVM |
 | AndroidX Room (+ KSP) | 2.8.5 | Apache 2.0 | Messages, outbox, key pins |
 | Nordic Android-BLE-Library (+ ktx) | 2.11.0 | BSD-3-Clause | GATT operation queue, retries, MTU |
+| MapLibre Native Android | 13.6.1 | BSD-2-Clause | Offline street map (OpenFreeMap tiles, OSM data © OpenStreetMap contributors) |
 | JUnit Jupiter | 6.1.3 | EPL 2.0 | Tests |
 | kotlinx-coroutines-test | 1.11.0 | Apache 2.0 | Virtual-time tests |
 

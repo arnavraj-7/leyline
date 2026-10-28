@@ -59,6 +59,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.leyline.app.mesh.MeshService
+import dev.leyline.app.mesh.UpdateState
 import dev.leyline.app.ui.LeylineMark
 import dev.leyline.app.ui.LeylineTheme
 import dev.leyline.app.ui.MeshColors
@@ -72,6 +73,7 @@ import dev.leyline.app.ui.Pill
 import dev.leyline.app.ui.SettingsScreen
 import dev.leyline.app.ui.SettingsViewModel
 import dev.leyline.ble.BlePermissions
+import dev.leyline.ble.WifiDirectLink
 
 class MainActivity : ComponentActivity() {
     private val container get() = (application as LeylineApp).container
@@ -124,6 +126,11 @@ class MainActivity : ComponentActivity() {
 
         LaunchedEffect(granted) {
             if (granted) MeshService.start(this@MainActivity)
+            // Wi-Fi Direct (big backlogs, app updates) is optional, so it isn't part of the gate;
+            // phones that joined before it was asked for get asked once here.
+            if (granted && checkSelfPermission(WifiDirectLink.permission()) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions.launch(arrayOf(WifiDirectLink.permission()))
+            }
         }
         // Permissions can change outside the app (system settings, a grant that raced the
         // dialog), so check again every time the screen comes back.
@@ -188,6 +195,7 @@ class MainActivity : ComponentActivity() {
                     // Android 11 and below return no BLE scan results with location services off.
                     Warning("Android ${Build.VERSION.RELEASE} needs Location on to find nearby phones.", null) {}
                 }
+                UpdateBanner()
                 when (Tab.entries[tab]) {
                     Tab.MESSAGES -> MessagesScreen(
                         messages,
@@ -246,6 +254,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** A newer build is coming in from a neighbour, or is ready to install. */
+    @Composable
+    private fun UpdateBanner() {
+        val update by container.mesh.update.collectAsStateWithLifecycle()
+        val topology by container.mesh.topology.collectAsStateWithLifecycle()
+        fun name(node: dev.leyline.mesh.NodeId) = topology.names[node] ?: "a nearby phone"
+        when (val u = update) {
+            UpdateState.None -> Unit
+            is UpdateState.Downloading -> Warning(
+                if (u.onWifi) {
+                    "Update v${u.version} from ${name(u.from)}: ${100L * u.received / u.size.coerceAtLeast(1)}%"
+                } else {
+                    "Update v${u.version} found on ${name(u.from)}. Waiting for Wi-Fi Direct: turn Wi-Fi on (no network needed)."
+                },
+                null,
+            ) {}
+            is UpdateState.Ready -> Warning("Update v${u.version} is ready, passed on over the mesh.", "Install") {
+                container.mesh.installUpdate()
+            }
+            is UpdateState.Failed -> Warning("Update v${u.version} refused: ${u.reason}.", null) {}
+        }
+    }
+
     @Composable
     private fun Warning(text: String, action: String?, onAction: () -> Unit) {
         Card(
@@ -267,6 +298,7 @@ class MainActivity : ComponentActivity() {
         val extra = buildList {
             add(Manifest.permission.ACCESS_FINE_LOCATION)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+            add(WifiDirectLink.permission())
         }
         return (BlePermissions.required().toList() + extra).distinct().toTypedArray()
     }

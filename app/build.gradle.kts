@@ -12,8 +12,12 @@ android {
         applicationId = "dev.leyline"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        // Bump with -PleylineVersion=2 to make a build that spreads to older phones over the mesh.
+        val build = (findProperty("leylineVersion") as String?)?.toInt() ?: 1
+        versionCode = build
+        versionName = "0.1.$build"
+        // Phones only: MapLibre's x86 builds would double the APK for emulators we don't ship to.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     buildFeatures {
@@ -42,5 +46,6 @@ dependencies {
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.maplibre.android)
     ksp(libs.androidx.room.compiler)
 }

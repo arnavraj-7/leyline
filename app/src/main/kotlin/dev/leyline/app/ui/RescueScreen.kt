@@ -366,6 +366,11 @@ fun FinderSheet(sos: MessageEntity, name: String, viewModel: MessagesViewModel, 
                 }
             }
             Text(proximity(rssi), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+            // Far away the signal says nothing about direction; GPS does. Up close it's the other way round.
+            sos.location()?.let { there ->
+                val state by viewModel.state.collectAsStateWithLifecycle()
+                PointerArrow(state.myLocation, there)
+            }
             Text(
                 "Signal strength, not distance: walls and bodies weaken it. Walk a few steps at a time and follow it as it gets warmer.",
                 style = MaterialTheme.typography.labelSmall,
