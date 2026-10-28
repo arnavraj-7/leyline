@@ -17,6 +17,7 @@ import dev.leyline.mesh.MeshEvent
 import dev.leyline.mesh.MeshNode
 import dev.leyline.mesh.MeshStats
 import dev.leyline.mesh.Location
+import dev.leyline.mesh.MediaKind
 import dev.leyline.mesh.MessageBody
 import dev.leyline.mesh.MessageId
 import dev.leyline.mesh.NodeId
@@ -89,6 +90,7 @@ class MeshController(
     private val trace = PacketTrace(self)
     private val alarm = Alarm(context, appScope)
     private val updates = UpdateShare(context) { Log.i(TAG, it) }
+    private val media = MediaStore(context)
     private var session: Session? = null
     private var uiVisible = false
 
@@ -275,6 +277,31 @@ class MeshController(
         return SendResult.Sent(packet.id, withLocation = false)
     }
 
+    /**
+     * Sends a photo or voice clip as numbered pieces, each a normal signed packet.
+     * To one person every piece is sealed for them, exactly like private text.
+     * The chat shows it once, recorded under the last piece's id so its receipt
+     * says it arrived.
+     */
+    suspend fun sendMedia(kind: MediaKind, bytes: ByteArray, destination: NodeId): SendResult {
+        val node = session?.node ?: return SendResult.NotRunning
+        val id = kotlin.random.Random.nextLong()
+        val chunks = media.split(kind, id, bytes) ?: return SendResult.TooLong
+        val file = media.save(self, id, kind, bytes)
+        var last: Packet? = null
+        var encrypted = false
+        for (chunk in chunks) {
+            val (wire, sealed) = forTheAir(MessageBody("", senderName = settings.name.value, media = chunk), sos = false, destination)
+            encrypted = sealed
+            last = node.send(wire.encode(), destination, Priority.NORMAL, settings.ttl.value).also { trace.onSent(it) }
+        }
+        val packet = last ?: return SendResult.TooLong
+        repository.recordOutgoing(packet, MessageBody("", senderName = settings.name.value), System.currentTimeMillis(), encrypted, kind.code to file.name)
+        return SendResult.Sent(packet.id, withLocation = false, encrypted)
+    }
+
+    fun mediaFile(name: String) = media.file(name)
+
     /** Stops the alarm and its notification together, from the banner or the notification. */
     fun stopRinging() {
         alarm.stop()
@@ -308,7 +335,7 @@ class MeshController(
         if (sos) return body to false
         if (destination == NodeId.BROADCAST) return body.copy(boxKey = boxKeys.publicKey) to false
         val theirs = repository.boxKey(destination) ?: return body.copy(boxKey = boxKeys.publicKey) to false
-        val inner = MessageBody(body.text, body.location)
+        val inner = MessageBody(body.text, body.location, media = body.media)
         // A key that isn't a point on the curve makes seal throw; send it readable rather
         // than crash. It is marked unencrypted, so the UI doesn't claim otherwise.
         val sealed = runCatching { Sealing.seal(inner.encode(), boxKeys.private, theirs, self, destination) }.getOrNull()
@@ -323,7 +350,7 @@ class MeshController(
         val plain = theirs?.let { Sealing.open(sealed, boxKeys.private, it, packet.origin, packet.destination) }
             ?: return body.copy(sealed = null, text = "Encrypted message that couldn't be opened on this phone") to false
         val inner = runCatching { MessageBody.decode(plain) }.getOrNull() ?: return body.copy(sealed = null) to false
-        return body.copy(text = inner.text, location = inner.location, sealed = null) to true
+        return body.copy(text = inner.text, location = inner.location, media = inner.media, sealed = null) to true
     }
 
     /**
@@ -399,6 +426,13 @@ class MeshController(
                     return
                 }
                 val (body, encrypted) = opened(received, event.packet)
+                // A photo or voice piece: show it once the last piece is in, not before.
+                body.media?.let { chunk ->
+                    val file = media.accept(event.packet.origin, chunk) ?: return
+                    repository.recordDelivered(event, body.copy(media = null), encrypted, chunk.kind.code to file.name)
+                    publishTopology()
+                    return
+                }
                 if (!repository.recordDelivered(event, body, encrypted)) return
                 body.response?.let { response ->
                     if (repository.isOwnSos(response.sos.value, since = 0)) notifier.helpComing(event.packet.id.value, sender, response.status)

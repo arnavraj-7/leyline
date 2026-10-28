@@ -34,6 +34,23 @@ class PayloadsTest {
     }
 
     @Test
+    fun `media chunk round trips and a full one fits a packet`() {
+        val chunk = MediaChunk(42L, MediaKind.PHOTO, index = 3, count = 20, ByteArray(MediaChunk.MAX_BYTES) { it.toByte() })
+        val body = MessageBody("", senderName = "A name of thirty-two bytes long!", boxKey = ByteArray(P256.PUBLIC_KEY_SIZE), media = chunk)
+        val encoded = body.encode()
+        assertEquals(body, MessageBody.decode(encoded))
+        // Sealing adds a key and a tag; there must still be room under the packet cap.
+        assertEquals(true, encoded.size + 100 <= Packet.MAX_PAYLOAD)
+    }
+
+    @Test
+    fun `presence and media together`() {
+        val chunk = MediaChunk(7L, MediaKind.VOICE, 0, 1, byteArrayOf(1, 2, 3))
+        val body = MessageBody("hi", presence = true, media = chunk)
+        assertEquals(body, MessageBody.decode(body.encode()))
+    }
+
+    @Test
     fun `non ascii text survives`() {
         val body = MessageBody("मदद चाहिए 🆘")
         assertEquals(body, MessageBody.decode(body.encode()))

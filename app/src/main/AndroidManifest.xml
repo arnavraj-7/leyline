@@ -16,6 +16,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Install a newer build a neighbour passed on (UpdateShare). The user still confirms. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Push-to-talk voice messages, asked for the first time the mic is held. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- GPS for the SOS location, on every Android version. mesh-ble caps this
          permission at API 30 (scanning only); the app needs it beyond that. -->

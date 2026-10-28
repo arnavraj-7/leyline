@@ -14,6 +14,7 @@ import dev.leyline.app.mesh.TraceEntry
 import dev.leyline.ble.RadioState
 import dev.leyline.ble.Sighting
 import dev.leyline.mesh.Location
+import dev.leyline.mesh.MediaKind
 import dev.leyline.mesh.MeshStats
 import dev.leyline.mesh.MessageBody
 import dev.leyline.mesh.MessageId
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 private val WHILE_VISIBLE = SharingStarted.WhileSubscribed(5_000)
 
@@ -178,6 +180,20 @@ class MessagesViewModel(private val container: AppContainer) : ViewModel() {
             onDone(result is SendResult.Sent)
         }
     }
+
+    /** A photo or voice clip, to the person picked in "To:" or everyone. */
+    fun sendMedia(kind: MediaKind, bytes: ByteArray) {
+        val destination = _replyTo.value ?: NodeId.BROADCAST
+        viewModelScope.launch {
+            _notice.value = when (mesh.sendMedia(kind, bytes, destination)) {
+                is SendResult.Sent -> null
+                SendResult.NotRunning -> "Mesh is off. Turn it on in Settings."
+                SendResult.TooLong -> "Too big to send over the mesh"
+            }
+        }
+    }
+
+    fun mediaFile(name: String): File = mesh.mediaFile(name)
 
     companion object {
         const val DEFAULT_SOS = "SOS: I need help."

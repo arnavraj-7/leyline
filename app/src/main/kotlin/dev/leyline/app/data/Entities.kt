@@ -39,6 +39,9 @@ data class MessageEntity(
     val responseStatus: Int? = null,
     /** A private message that crossed the mesh end-to-end encrypted. */
     val encrypted: Boolean = false,
+    /** A photo or voice clip: [dev.leyline.mesh.MediaKind] code, and its file in the app's media folder. */
+    val mediaKind: Int? = null,
+    val mediaFile: String? = null,
 )
 
 /** "Node X got message Y, Z hops away": one row per receiver of our message. */

@@ -25,8 +25,8 @@ class MessageRepository(private val db: LeylineDatabase) {
     suspend fun knownIds(): List<MessageId> = dao.recentIds().map(::MessageId)
 
     /** [body] is what we wrote; for a sealed private message, the plaintext rather than what went on air. */
-    suspend fun recordOutgoing(packet: Packet, body: MessageBody, now: Long, encrypted: Boolean = false) {
-        dao.insert(packet.toEntity(body, receivedAt = now, hops = 0, outgoing = true).copy(encrypted = encrypted))
+    suspend fun recordOutgoing(packet: Packet, body: MessageBody, now: Long, encrypted: Boolean = false, media: Pair<Int, String>? = null) {
+        dao.insert(packet.toEntity(body, receivedAt = now, hops = 0, outgoing = true).copy(encrypted = encrypted, mediaKind = media?.first, mediaFile = media?.second))
     }
 
     /**
@@ -35,8 +35,11 @@ class MessageRepository(private val db: LeylineDatabase) {
      * dedup, so even if the mesh delivered a repeat, the user is never shown or
      * notified twice.
      */
-    suspend fun recordDelivered(event: MeshEvent.Delivered, body: MessageBody, encrypted: Boolean): Boolean =
-        dao.insert(event.packet.toEntity(body, event.receivedAt, event.hops, outgoing = false).copy(encrypted = encrypted)) != -1L
+    suspend fun recordDelivered(event: MeshEvent.Delivered, body: MessageBody, encrypted: Boolean, media: Pair<Int, String>? = null): Boolean =
+        dao.insert(
+            event.packet.toEntity(body, event.receivedAt, event.hops, outgoing = false)
+                .copy(encrypted = encrypted, mediaKind = media?.first, mediaFile = media?.second),
+        ) != -1L
 
     /** Remembers [node]'s encryption key; a later, different key for the same node is ignored. */
     suspend fun rememberBoxKey(node: NodeId, key: ByteArray, now: Long) {

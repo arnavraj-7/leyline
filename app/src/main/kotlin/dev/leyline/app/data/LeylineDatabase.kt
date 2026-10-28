@@ -14,7 +14,7 @@ import androidx.room.RoomDatabase
         KeyPinEntity::class,
         BoxKeyEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class LeylineDatabase : RoomDatabase() {

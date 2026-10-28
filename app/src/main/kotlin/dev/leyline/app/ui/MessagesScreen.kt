@@ -80,12 +80,14 @@ import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.leyline.app.data.MessageWithReceipts
 import dev.leyline.mesh.Location
+import dev.leyline.mesh.MediaKind
 import dev.leyline.mesh.MessageBody
 import dev.leyline.mesh.NodeId
 import dev.leyline.mesh.ResponseStatus
 import dev.leyline.mesh.SosKind
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -140,6 +142,7 @@ fun MessagesScreen(viewModel: MessagesViewModel, openSos: Boolean, onSosHandled:
                         onOpen = { routeFor = it.message.id },
                         onRespond = viewModel::respond,
                         onFind = { findFor = it },
+                        mediaFile = viewModel::mediaFile,
                     )
                 }
             }
@@ -159,9 +162,16 @@ fun MessagesScreen(viewModel: MessagesViewModel, openSos: Boolean, onSosHandled:
                 draft = draft,
                 onDraft = { draft = it },
                 replyTo = replyTo?.let { state.names[it] ?: it.toString() },
-                onCancelReply = { viewModel.replyPrivately(null) },
                 enabled = state.running,
                 onSend = { viewModel.send(draft, sos = false) { if (it) draft = "" } },
+                picker = { RecipientPicker(state.names, state.self, replyTo, viewModel::replyPrivately) },
+                attach = {
+                    AttachButtons(
+                        enabled = state.running,
+                        onPhoto = { viewModel.sendMedia(MediaKind.PHOTO, it) },
+                        onVoice = { viewModel.sendMedia(MediaKind.VOICE, it) },
+                    )
+                },
             )
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter).padding(top = 52.dp))
@@ -252,6 +262,7 @@ private fun MessageItem(
     onOpen: (MessageWithReceipts) -> Unit,
     onRespond: (Long, ResponseStatus) -> Unit,
     onFind: (Long) -> Unit,
+    mediaFile: (String) -> File,
 ) {
     when {
         item.message.sos -> SosCard(
@@ -261,14 +272,14 @@ private fun MessageItem(
             onRespond = { onRespond(item.message.id, it) },
             onFind = { onFind(item.message.id) },
         )
-        item.message.outgoing -> OutgoingBubble(item, state) { onOpen(item) }
-        else -> IncomingBubble(item, state, onReply) { onOpen(item) }
+        item.message.outgoing -> OutgoingBubble(item, state, mediaFile) { onOpen(item) }
+        else -> IncomingBubble(item, state, onReply, mediaFile) { onOpen(item) }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun IncomingBubble(item: MessageWithReceipts, state: MessagesUiState, onReply: (NodeId) -> Unit, onOpen: () -> Unit) {
+private fun IncomingBubble(item: MessageWithReceipts, state: MessagesUiState, onReply: (NodeId) -> Unit, mediaFile: (String) -> File, onOpen: () -> Unit) {
     val m = item.message
     val origin = NodeId(m.origin)
     val name = m.senderName ?: state.names[origin] ?: origin.toString()
@@ -290,7 +301,12 @@ private fun IncomingBubble(item: MessageWithReceipts, state: MessagesUiState, on
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier.combinedClickable(onClick = onOpen, onLongClick = { onReply(origin) }),
             ) {
-                Text(m.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyLarge)
+                val file = m.mediaFile?.let(mediaFile)
+                if (file != null) {
+                    MediaBody(m, file, MaterialTheme.colorScheme.onSurface)
+                } else {
+                    Text(m.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyLarge)
+                }
             }
             Text(
                 metaLine(item, state.names),
@@ -303,7 +319,7 @@ private fun IncomingBubble(item: MessageWithReceipts, state: MessagesUiState, on
 }
 
 @Composable
-private fun OutgoingBubble(item: MessageWithReceipts, state: MessagesUiState, onOpen: () -> Unit) {
+private fun OutgoingBubble(item: MessageWithReceipts, state: MessagesUiState, mediaFile: (String) -> File, onOpen: () -> Unit) {
     val m = item.message
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
         if (m.destination != NodeId.BROADCAST.value) {
@@ -321,12 +337,17 @@ private fun OutgoingBubble(item: MessageWithReceipts, state: MessagesUiState, on
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(18.dp, 4.dp, 18.dp, 18.dp)).clickable(onClick = onOpen),
         ) {
-            Text(
-                m.text,
-                Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onPrimary,
-            )
+            val file = m.mediaFile?.let(mediaFile)
+            if (file != null) {
+                MediaBody(m, file, MaterialTheme.colorScheme.onPrimary)
+            } else {
+                Text(
+                    m.text,
+                    Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
         }
         val (status, delivered) = deliveryLine(item, state)
         Text(
@@ -620,19 +641,15 @@ private fun Composer(
     draft: String,
     onDraft: (String) -> Unit,
     replyTo: String?,
-    onCancelReply: () -> Unit,
     enabled: Boolean,
     onSend: () -> Unit,
+    picker: @Composable () -> Unit,
+    attach: @Composable () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp)) {
-        if (replyTo != null) {
-            Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Pill("Private", MeshColors.relay)
-                Text(" to $replyTo", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                IconButton(onClick = onCancelReply) { Icon(Icons.Filled.Close, contentDescription = "Send to everyone instead") }
-            }
-        }
+        picker()
         Row(verticalAlignment = Alignment.CenterVertically) {
+            attach()
             TextField(
                 value = draft,
                 onValueChange = { if (it.length <= MAX_CHAT_CHARS) onDraft(it) },

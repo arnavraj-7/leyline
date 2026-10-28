@@ -55,16 +55,52 @@ enum class ResponseStatus(val code: Int) {
 /** A rescuer's answer to the SOS [sos], broadcast so the victim and every other rescuer see it. */
 data class Response(val sos: MessageId, val status: ResponseStatus)
 
+/** What a [MediaChunk] is part of. */
+enum class MediaKind(val code: Int) {
+    PHOTO(1),
+    VOICE(2);
+
+    companion object {
+        fun fromCode(code: Int): MediaKind? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/**
+ * One piece of a photo or voice clip. Media is bigger than a packet, so it goes
+ * as [count] messages sharing [id]; the receiver shows it once every [index]
+ * has arrived. Each piece is a normal signed packet, so relaying, dedup and
+ * store-and-forward need nothing new.
+ */
+class MediaChunk(val id: Long, val kind: MediaKind, val index: Int, val count: Int, val bytes: ByteArray) {
+    init {
+        require(count in 1..MAX_CHUNKS && index in 0 until count) { "chunk $index of $count" }
+        require(bytes.size <= MAX_BYTES) { "chunk of ${bytes.size} bytes" }
+    }
+
+    override fun equals(other: Any?) = other is MediaChunk && id == other.id && kind == other.kind &&
+        index == other.index && count == other.count && bytes.contentEquals(other.bytes)
+
+    override fun hashCode() = (id * 31 + index).hashCode()
+
+    companion object {
+        /** Leaves room in a packet for the name, the encryption key and sealing. */
+        const val MAX_BYTES = 900
+        const val MAX_CHUNKS = 64
+    }
+}
+
 /**
  * Payload of a [PacketType.MESSAGE].
  *
  * ```
- * flags u8 (bit 0 location, 1 sender name, 2 SOS details, 3 response, 4 ring, 5 box key, 6 sealed, 7 presence)
+ * flags u8 (bit 0 location, 1 sender name, 2 SOS details, 3 response, 4 ring, 5 box key, 6 sealed, 7 more flags)
+ * [more flags u8 (bit 0 presence, bit 1 media)] if bit 7
  * [lat i32 | lon i32 | accuracy u16]          if bit 0
  * [name length u8 | name UTF-8]               if bit 1
  * [kind u8 | people u8 | details flags u8]    if bit 2; details bit 0 = someone injured
  * [answered SOS id u64 | status u8]           if bit 3
  * [SOS id u64]                                if bit 4
+ * [kind u8 | media id u64 | index u8 | count u8 | length u16 | bytes]  if media
  * [sender's box public key, 33 B]             if bit 5
  * text UTF-8, rest of the payload             if bit 6 is clear
  * sealed body, rest of the payload            if bit 6 is set
@@ -81,6 +117,8 @@ data class Response(val sos: MessageId, val status: ResponseStatus)
  * [presence] marks a "here I am" beacon: just a location and a name, sent every
  * minute so the map can place phones by real direction and distance. It is a
  * flag, not a packet type, so relays need nothing new; receivers don't show it as chat.
+ *
+ * [media] is one piece of a photo or voice clip, see [MediaChunk].
  */
 data class MessageBody(
     val text: String,
@@ -92,6 +130,7 @@ data class MessageBody(
     val boxKey: ByteArray? = null,
     val sealed: ByteArray? = null,
     val presence: Boolean = false,
+    val media: MediaChunk? = null,
 ) {
     init {
         require(boxKey == null || boxKey.size == P256.PUBLIC_KEY_SIZE) { "box key must be ${P256.PUBLIC_KEY_SIZE} bytes" }
@@ -102,15 +141,26 @@ data class MessageBody(
     override fun equals(other: Any?): Boolean =
         other is MessageBody && text == other.text && location == other.location && senderName == other.senderName &&
             details == other.details && response == other.response && ring == other.ring &&
-            boxKey.contentEquals(other.boxKey) && sealed.contentEquals(other.sealed) && presence == other.presence
+            boxKey.contentEquals(other.boxKey) && sealed.contentEquals(other.sealed) && presence == other.presence &&
+            media == other.media
 
     override fun hashCode(): Int = text.hashCode() * 31 + (sealed?.contentHashCode() ?: 0)
 
     fun encode(): ByteArray {
         val text = text.encodeToByteArray()
         val name = senderName?.takeIf { it.isNotBlank() }?.let { utf8Prefix(it, MAX_NAME_BYTES) }
-        var flags = if (presence) FLAG_PRESENCE else 0
+        var flags = 0
+        var more = 0
         var size = 1 + text.size
+        if (presence) more = more or MORE_PRESENCE
+        if (media != null) {
+            more = more or MORE_MEDIA
+            size += MEDIA_HEADER + media.bytes.size
+        }
+        if (more != 0) {
+            flags = flags or FLAG_MORE
+            size += 1
+        }
         if (location != null) {
             flags = flags or FLAG_LOCATION
             size += LOCATION_SIZE
@@ -141,6 +191,7 @@ data class MessageBody(
         }
         val buf = ByteBuffer.allocate(size)
         buf.put(flags.toByte())
+        if (more != 0) buf.put(more.toByte())
         location?.let {
             buf.putInt(it.latE7)
             buf.putInt(it.lonE7)
@@ -160,6 +211,14 @@ data class MessageBody(
             buf.put(it.status.code.toByte())
         }
         ring?.let { buf.putLong(it.value) }
+        media?.let {
+            buf.put(it.kind.code.toByte())
+            buf.putLong(it.id)
+            buf.put(it.index.toByte())
+            buf.put(it.count.toByte())
+            buf.putShort(it.bytes.size.toShort())
+            buf.put(it.bytes)
+        }
         boxKey?.let { buf.put(it) }
         sealed?.let { buf.put(it) }
         buf.put(text)
@@ -178,17 +237,21 @@ data class MessageBody(
         private const val FLAG_RING = 0x10
         private const val FLAG_BOX_KEY = 0x20
         private const val FLAG_SEALED = 0x40
-        private const val FLAG_PRESENCE = 0x80
+        private const val FLAG_MORE = 0x80
+        private const val MORE_PRESENCE = 0x01
+        private const val MORE_MEDIA = 0x02
         private const val LOCATION_SIZE = 10
         private const val DETAILS_SIZE = 3
         private const val RESPONSE_SIZE = 9
         private const val RING_SIZE = 8
+        private const val MEDIA_HEADER = 13
         private const val DETAIL_INJURED = 0x01
 
         fun decode(bytes: ByteArray): MessageBody {
             val buf = ByteBuffer.wrap(bytes)
             try {
                 val flags = buf.get().toUByte().toInt()
+                val more = if (flags and FLAG_MORE != 0) buf.get().toUByte().toInt() else 0
                 val location = if (flags and FLAG_LOCATION != 0) {
                     Location(buf.getInt(), buf.getInt(), buf.getShort().toUShort().toInt())
                 } else {
@@ -215,13 +278,27 @@ data class MessageBody(
                     null
                 }
                 val ring = if (flags and FLAG_RING != 0) MessageId(buf.getLong()) else null
+                val media = if (more and MORE_MEDIA != 0) {
+                    val code = buf.get().toUByte().toInt()
+                    val kind = MediaKind.fromCode(code) ?: throw MalformedPacketException("media kind $code")
+                    val id = buf.getLong()
+                    val index = buf.get().toUByte().toInt()
+                    val count = buf.get().toUByte().toInt()
+                    val length = buf.getShort().toUShort().toInt()
+                    if (count !in 1..MediaChunk.MAX_CHUNKS || index >= count || length > MediaChunk.MAX_BYTES) {
+                        throw MalformedPacketException("media chunk $index of $count, $length bytes")
+                    }
+                    MediaChunk(id, kind, index, count, ByteArray(length).also { buf.get(it) })
+                } else {
+                    null
+                }
                 val boxKey = if (flags and FLAG_BOX_KEY != 0) ByteArray(P256.PUBLIC_KEY_SIZE).also { buf.get(it) } else null
                 val rest = ByteArray(buf.remaining()).also { buf.get(it) }
-                val presence = flags and FLAG_PRESENCE != 0
+                val presence = more and MORE_PRESENCE != 0
                 return if (flags and FLAG_SEALED != 0) {
-                    MessageBody("", location, name, details, response, ring, boxKey, sealed = rest, presence = presence)
+                    MessageBody("", location, name, details, response, ring, boxKey, sealed = rest, presence = presence, media = media)
                 } else {
-                    MessageBody(rest.decodeToString(), location, name, details, response, ring, boxKey, presence = presence)
+                    MessageBody(rest.decodeToString(), location, name, details, response, ring, boxKey, presence = presence, media = media)
                 }
             } catch (e: BufferUnderflowException) {
                 throw MalformedPacketException("truncated message body")
